@@ -37,7 +37,7 @@ def send_whatsapp_document(to_number, document_path, filename):
         "Authorization": f"Bearer {WHATSAPP_TOKEN}"
     }
     
-    mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    mime_type = 'application/pdf'
     files = {
         'file': (filename, open(document_path, 'rb'), mime_type),
         'type': (None, mime_type),
@@ -148,16 +148,17 @@ def handle_incoming_message(phone_number, msg_text):
         send_whatsapp_message(phone_number, f"🔄 Generating label document with {len(session['addresses'])} addresses...")
         
         import datetime
+        from pdf_generator import create_address_pdf
+        
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        docx_filename = f"addresses_{timestamp}.docx"
+        pdf_filename = f"addresses_{timestamp}.pdf"
         
         os.makedirs("output", exist_ok=True)
-        docx_path = os.path.join("output", docx_filename)
+        pdf_path = os.path.join("output", pdf_filename)
         
-        doc = create_address_document(session['addresses'], session['biller_id'], "prepaidtemplate.docx")
-        doc.save(docx_path)
+        create_address_pdf(session['addresses'], session['biller_id'], pdf_path)
         
-        success = send_whatsapp_document(phone_number, docx_path, docx_filename)
+        success = send_whatsapp_document(phone_number, pdf_path, pdf_filename)
         
         session['is_recording'] = False
         session['addresses'] = []
