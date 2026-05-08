@@ -10,5 +10,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run Gunicorn
-CMD ["gunicorn", "-b", "0.0.0.0:10000", "app:app"]
+# Run Gunicorn binding to the dynamic PORT provided by Render
+CMD gunicorn -b 0.0.0.0:$PORT app:app
