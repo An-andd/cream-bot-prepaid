@@ -1,6 +1,5 @@
-Flask==3.0.0
-requests==2.31.0
-python-docx==1.1.0
-lxml==4.9.3
-gunicorn==21.2.0
-reportlab==4.5.0
+flask
+requests
+python-docx
+lxml
+gunicorn
