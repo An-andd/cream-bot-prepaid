@@ -314,6 +314,13 @@ def parse_address_block(raw_text):
                 # Between recognized fields -> address continuation
                 address_lines.append(line)
     
+    # If no name was explicitly labeled, assume the first address line is the name
+    if not result['name'] and address_lines:
+        result['name'] = address_lines[0]
+        address_lines = address_lines[1:]
+        
+    # Also, break the address into multiple lines instead of one giant string
+    # so it naturally wraps better in the template
     result['address'] = ', '.join(address_lines) if address_lines else ''
     order_text = ', '.join(order_lines) if order_lines else ''
     result['order'] = abbreviate_order(order_text)
