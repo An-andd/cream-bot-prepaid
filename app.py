@@ -153,28 +153,18 @@ def handle_incoming_message(phone_number, msg_text):
         send_whatsapp_message(phone_number, f"🔄 Generating label document with {len(session['addresses'])} addresses...")
         
         import datetime
+        from pdf_generator import create_address_pdf
+        
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        docx_filename = f"addresses_{timestamp}.docx"
         pdf_filename = f"addresses_{timestamp}.pdf"
         
         os.makedirs("output", exist_ok=True)
-        docx_path = os.path.join("output", docx_filename)
         pdf_path = os.path.join("output", pdf_filename)
         
-        # 1. Generate perfect DOCX template
-        doc = create_address_document(session['addresses'], session['biller_id'], "prepaidtemplate.docx")
-        doc.save(docx_path)
+        # Native PDF generation using Platypus
+        create_address_pdf(session['addresses'], session['biller_id'], pdf_path)
         
-        # 2. Convert to PDF using LibreOffice (Linux/Render)
-        import subprocess
-        try:
-            # This works if LibreOffice is installed via Docker
-            subprocess.run(["libreoffice", "--headless", "--convert-to", "pdf", docx_path, "--outdir", "output"], check=True)
-            success = send_whatsapp_document(phone_number, pdf_path, pdf_filename, 'application/pdf')
-        except Exception as e:
-            # Fallback to DOCX if PDF fails
-            print("PDF conversion failed:", e)
-            success = send_whatsapp_document(phone_number, docx_path, docx_filename, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        success = send_whatsapp_document(phone_number, pdf_path, pdf_filename, 'application/pdf')
         
         session['is_recording'] = False
         session['addresses'] = []

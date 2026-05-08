@@ -1,94 +1,148 @@
+import os
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT, TA_LEFT
 
 def create_address_pdf(addresses, biller_id, pdf_path):
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    width, height = A4
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=A4,
+        rightMargin=10*mm,
+        leftMargin=10*mm,
+        topMargin=10*mm,
+        bottomMargin=10*mm
+    )
     
-    margin_x = 10 * mm
-    margin_y = 10 * mm
+    styles = getSampleStyleSheet()
     
-    cell_w = (width - 2 * margin_x) / 2
-    cell_h = (height - 2 * margin_y) / 3
+    # Custom styles
+    style_normal = ParagraphStyle(
+        'CustomNormal',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=13, # Line spacing
+        textColor=colors.black
+    )
+    
+    style_name = ParagraphStyle(
+        'CustomName',
+        parent=style_normal,
+        fontSize=12,
+        leading=15
+    )
+    
+    style_from = ParagraphStyle(
+        'CustomFrom',
+        parent=style_normal,
+        alignment=TA_RIGHT,
+        fontSize=9,
+        leading=12
+    )
+
+    style_order = ParagraphStyle(
+        'CustomOrder',
+        parent=style_normal,
+        fontSize=11,
+        leading=14
+    )
     
     blocks_per_page = 6
-    num_pages = (len(addresses) + blocks_per_page - 1) // blocks_per_page
+    elements = []
     
-    for page in range(num_pages):
-        for i in range(6):
-            idx = page * 6 + i
+    # Process addresses into blocks of 6
+    for i in range(0, len(addresses), blocks_per_page):
+        chunk = addresses[i:i+blocks_per_page]
+        
+        # We need a 3x2 grid. Pad chunk to 6 if necessary.
+        while len(chunk) < 6:
+            chunk.append(None)
             
-            row = i // 2
-            col = i % 2
+        data = []
+        for row_idx in range(3):
+            row_data = []
+            for col_idx in range(2):
+                addr = chunk[row_idx * 2 + col_idx]
+                if addr is None:
+                    # Empty cell layout (just the From and Biller ID)
+                    to_para = Paragraph("", style_normal)
+                    order_para = Paragraph("", style_order)
+                else:
+                    # Build "To" block
+                    to_text = "To:<br/>"
+                    if addr['name']:
+                        to_text += f"<font size=12>{addr['name']}</font><br/>"
+                    if addr['address']:
+                        to_text += f"{addr['address']}<br/>"
+                    if addr['pincode']:
+                        to_text += f"Pin: {addr['pincode']}<br/>"
+                    if addr['state']:
+                        to_text += f"{addr['state']}<br/>"
+                    if addr['phone']:
+                        to_text += f"Mob: {addr['phone']}"
+                        
+                    to_para = Paragraph(to_text, style_normal)
+                    order_para = Paragraph(addr['order'] if addr['order'] else "", style_order)
+                
+                # From Block
+                from_text = (
+                    "From:<br/>"
+                    "CREAM X EMIRATES<br/>"
+                    "PUTHUPALLY, KTM<br/>"
+                    "Pin: 686011<br/>"
+                    "Mob: 8129770502"
+                )
+                from_para = Paragraph(from_text, style_from)
+                
+                biller_para = Paragraph(f"Biller ID: {biller_id}", style_normal)
+                
+                # Create a sub-table for the bottom section (Order/Biller on left, From on right)
+                bottom_data = [
+                    [order_para, from_para],
+                    [biller_para, ""]
+                ]
+                bottom_table = Table(bottom_data, colWidths=[45*mm, 45*mm])
+                bottom_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+                    ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                    ('TOPPADDING', (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ]))
+                
+                # Main cell table
+                cell_data = [
+                    [to_para],
+                    [Spacer(1, 10*mm)], # spacer to push bottom block down
+                    [bottom_table]
+                ]
+                cell_table = Table(cell_data, colWidths=[90*mm])
+                cell_table.setStyle(TableStyle([
+                    ('VALIGN', (0,0), (0,0), 'TOP'),
+                    ('VALIGN', (0,2), (0,2), 'BOTTOM'),
+                    ('LEFTPADDING', (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                ]))
+                
+                row_data.append(cell_table)
+            data.append(row_data)
             
-            x = margin_x + col * cell_w
-            y = height - margin_y - (row + 1) * cell_h
-            
-            # Draw cell border
-            c.rect(x, y, cell_w, cell_h)
-            
-            if idx < len(addresses):
-                addr = addresses[idx]
-                
-                # Setup font
-                c.setFont("Helvetica-Bold", 12)
-                
-                # To block
-                text_y = y + cell_h - 10 * mm
-                c.drawString(x + 5*mm, text_y, "To:")
-                
-                text_y -= 6 * mm
-                if addr['name']:
-                    c.drawString(x + 5*mm, text_y, addr['name'])
-                    text_y -= 6 * mm
-                if addr['address']:
-                    # Wrap address
-                    import textwrap
-                    lines = textwrap.wrap(addr['address'], width=40)
-                    for line in lines:
-                        c.drawString(x + 5*mm, text_y, line)
-                        text_y -= 6 * mm
-                if addr['pincode']:
-                    c.drawString(x + 5*mm, text_y, f"Pin: {addr['pincode']}")
-                    text_y -= 6 * mm
-                if addr['state']:
-                    c.drawString(x + 5*mm, text_y, addr['state'])
-                    text_y -= 6 * mm
-                if addr['phone']:
-                    c.drawString(x + 5*mm, text_y, f"Mob: {addr['phone']}")
-                    
-                # From block (right side)
-                from_x = x + cell_w / 2 + 10*mm
-                from_y = y + 40 * mm
-                
-                c.drawString(from_x, from_y, "From:")
-                c.drawString(from_x, from_y - 6*mm, "CREAM X EMIRATES")
-                c.drawString(from_x, from_y - 12*mm, "PUTHUPALLY, KTM")
-                c.drawString(from_x, from_y - 18*mm, "Pin: 686011")
-                c.drawString(from_x, from_y - 24*mm, "Mob: 8129770502")
-                
-                # Order Info (Left side, aligned with Pin of From block)
-                if addr['order']:
-                    c.drawString(x + 5*mm, from_y - 18*mm, addr['order'])
-                    
-                # Biller ID (Bottom left)
-                c.drawString(x + 5*mm, y + 5*mm, f"Biller ID: {biller_id}")
-                
-            else:
-                # Print empty block with From and Biller ID
-                c.setFont("Helvetica-Bold", 12)
-                
-                from_x = x + cell_w / 2 + 10*mm
-                from_y = y + 40 * mm
-                
-                c.drawString(from_x, from_y, "From:")
-                c.drawString(from_x, from_y - 6*mm, "CREAM X EMIRATES")
-                c.drawString(from_x, from_y - 12*mm, "PUTHUPALLY, KTM")
-                c.drawString(from_x, from_y - 18*mm, "Pin: 686011")
-                c.drawString(from_x, from_y - 24*mm, "Mob: 8129770502")
-                
-                c.drawString(x + 5*mm, y + 5*mm, f"Biller ID: {biller_id}")
-                
-        c.showPage()
-    c.save()
+        # Create the main 3x2 grid table
+        # A4 height is 297mm. Margins are 20mm. Usable height is 277mm.
+        # 3 rows = 277 / 3 = 92.33mm per row.
+        main_table = Table(data, colWidths=[95*mm, 95*mm], rowHeights=[92*mm, 92*mm, 92*mm])
+        main_table.setStyle(TableStyle([
+            ('GRID', (0,0), (-1,-1), 1, colors.black),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('PADDING', (0,0), (-1,-1), 3*mm),
+        ]))
+        
+        elements.append(main_table)
+        
+    doc.build(elements)
