@@ -105,14 +105,34 @@ def handle_incoming_message(phone_number, msg_text):
     lower_msg = msg_text.lower()
     
     if phone_number not in sessions:
-        sessions[phone_number] = {'biller_id': '1264602129', 'addresses': [], 'is_recording': False}
+        sessions[phone_number] = {'biller_id': '1260357626', 'addresses': [], 'is_recording': False, 'is_choosing_biller': False}
         
     session = sessions[phone_number]
     
     if lower_msg == 'start':
         session['addresses'] = []
-        session['is_recording'] = True
-        send_whatsapp_message(phone_number, "✅ Started new batch! Forward your customer addresses now. Type 'stop' when done.")
+        session['is_recording'] = False
+        session['is_choosing_biller'] = True
+        
+        menu = (
+            "Started new batch!\n\n"
+            "Please choose a Biller ID by replying with 1, 2, or 3:\n"
+            "1 - 1260357626\n"
+            "2 - 1264602129\n"
+            "3 - 1624036027"
+        )
+        send_whatsapp_message(phone_number, menu)
+        return
+        
+    if session['is_choosing_biller']:
+        options = {'1': '1260357626', '2': '1264602129', '3': '1624036027'}
+        if msg_text in options:
+            session['biller_id'] = options[msg_text]
+            session['is_choosing_biller'] = False
+            session['is_recording'] = True
+            send_whatsapp_message(phone_number, f"Biller ID set to {options[msg_text]}.\n\nForward your addresses now. (I will stay completely silent so your chat stays clean). Type 'stop' when done.")
+        else:
+            send_whatsapp_message(phone_number, "Invalid option. Please reply with 1, 2, or 3.")
         return
         
     if lower_msg == 'stop':
@@ -138,8 +158,6 @@ def handle_incoming_message(phone_number, msg_text):
         doc.save(docx_path)
         
         success = send_whatsapp_document(phone_number, docx_path, docx_filename)
-        if success:
-            send_whatsapp_message(phone_number, "✨ Done! Here is your document.")
         
         session['is_recording'] = False
         session['addresses'] = []
@@ -167,10 +185,10 @@ def handle_incoming_message(phone_number, msg_text):
     if session['is_recording']:
         parsed = parse_address_block(msg_text)
         session['addresses'].append(parsed)
-        pages_needed = (len(session['addresses']) + BLOCKS_PER_PAGE - 1) // BLOCKS_PER_PAGE
-        send_whatsapp_message(phone_number, f"✅ Added #{len(session['addresses'])}: {parsed['name'] or 'Unknown'}\nTotal Pages: {pages_needed}")
+        # SILENT! We don't send any confirmation message here anymore.
     else:
-        send_whatsapp_message(phone_number, "Hi! Type 'start' to begin recording addresses.")
+        # Ignore random messages when not recording
+        pass
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
