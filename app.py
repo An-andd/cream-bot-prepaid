@@ -30,14 +30,13 @@ def send_whatsapp_message(to_number, text):
     }
     requests.post(url, headers=headers, json=data)
 
-def send_whatsapp_document(to_number, document_path, filename):
+def send_whatsapp_document(to_number, document_path, filename, mime_type='application/pdf'):
     # Step 1: Upload document to Meta's servers
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/media"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}"
     }
     
-    mime_type = 'application/pdf'
     files = {
         'file': (filename, open(document_path, 'rb'), mime_type),
         'type': (None, mime_type),
@@ -148,17 +147,28 @@ def handle_incoming_message(phone_number, msg_text):
         send_whatsapp_message(phone_number, f"🔄 Generating label document with {len(session['addresses'])} addresses...")
         
         import datetime
-        from pdf_generator import create_address_pdf
-        
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        docx_filename = f"addresses_{timestamp}.docx"
         pdf_filename = f"addresses_{timestamp}.pdf"
         
         os.makedirs("output", exist_ok=True)
+        docx_path = os.path.join("output", docx_filename)
         pdf_path = os.path.join("output", pdf_filename)
         
-        create_address_pdf(session['addresses'], session['biller_id'], pdf_path)
+        # 1. Generate perfect DOCX template
+        doc = create_address_document(session['addresses'], session['biller_id'], "prepaidtemplate.docx")
+        doc.save(docx_path)
         
-        success = send_whatsapp_document(phone_number, pdf_path, pdf_filename)
+        # 2. Convert to PDF using LibreOffice (Linux/Render)
+        import subprocess
+        try:
+            # This works if LibreOffice is installed via Docker
+            subprocess.run(["libreoffice", "--headless", "--convert-to", "pdf", docx_path, "--outdir", "output"], check=True)
+            success = send_whatsapp_document(phone_number, pdf_path, pdf_filename, 'application/pdf')
+        except Exception as e:
+            # Fallback to DOCX if PDF fails
+            print("PDF conversion failed:", e)
+            success = send_whatsapp_document(phone_number, docx_path, docx_filename, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
         
         session['is_recording'] = False
         session['addresses'] = []
