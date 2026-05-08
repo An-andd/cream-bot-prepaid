@@ -464,14 +464,14 @@ def fill_cell(cell, addr, biller_id):
     if addr['phone']:
         to_lines.append(f"Mob: {addr['phone']}")
     
-    # Fill paragraphs 1-7 with customer address data (black, bold, size 28)
+    # Fill paragraphs 1-7 with customer address data (black, bold, size 22 to prevent spillover)
     for i in range(1, 8):
         if i - 1 < len(to_lines):
             set_paragraph_text(paragraphs[i], to_lines[i - 1], 
-                             bold=True, size=28, color="000000")
+                             bold=True, size=22, color="000000")
         else:
             set_paragraph_text(paragraphs[i], "", 
-                             bold=True, size=28, color="000000")
+                             bold=True, size=22, color="000000")
     
     # Insert order info into the empty left space of Para 11 (left of the 'From' address)
     if addr.get('order'):
@@ -499,7 +499,7 @@ def clear_cell_to_section(cell, biller_id):
     for i in range(1, 8):
         if i < len(paragraphs):
             set_paragraph_text(paragraphs[i], "",
-                             bold=True, size=28, color="0070c0")
+                             bold=True, size=22, color="000000")
     
     # Update Biller ID
     if len(paragraphs) > 13:
