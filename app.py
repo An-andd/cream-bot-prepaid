@@ -28,7 +28,9 @@ def send_whatsapp_message(to_number, text):
         "type": "text",
         "text": {"body": text}
     }
-    requests.post(url, headers=headers, json=data)
+    res = requests.post(url, headers=headers, json=data)
+    if res.status_code != 200:
+        print(f"ERROR sending message: {res.text}")
 
 def send_whatsapp_document(to_number, document_path, filename, mime_type='application/pdf'):
     # Step 1: Upload document to Meta's servers
@@ -65,7 +67,10 @@ def send_whatsapp_document(to_number, document_path, filename, mime_type='applic
             "filename": filename
         }
     }
-    requests.post(msg_url, headers=msg_headers, json=data)
+    res = requests.post(msg_url, headers=msg_headers, json=data)
+    if res.status_code != 200:
+        print(f"ERROR sending document message: {res.text}")
+        return False
     return True
 
 @app.route('/webhook', methods=['GET'])
@@ -94,6 +99,7 @@ def webhook_event():
             
             if 'text' in message_data:
                 msg_text = message_data['text']['body'].strip()
+                print(f"Received message from {phone_number}: {msg_text}")
                 handle_incoming_message(phone_number, msg_text)
                 
         return 'EVENT_RECEIVED', 200
