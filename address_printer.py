@@ -464,11 +464,13 @@ def fill_cell(cell, addr, biller_id):
     if addr['phone']:
         to_lines.append(f"Mob: {addr['phone']}")
     
-    # Fill paragraphs 1-7 with customer address data (black, bold, size 22 to prevent spillover)
+    # Fill paragraphs 1-7 with customer address data
     for i in range(1, 8):
         if i - 1 < len(to_lines):
+            # Make the very first line (Name) significantly larger (size 26), leave the rest at size 22
+            current_size = 26 if i == 1 else 22
             set_paragraph_text(paragraphs[i], to_lines[i - 1], 
-                             bold=True, size=22, color="000000")
+                             bold=True, size=current_size, color="000000")
         else:
             set_paragraph_text(paragraphs[i], "", 
                              bold=True, size=22, color="000000")
