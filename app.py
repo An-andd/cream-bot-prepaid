@@ -3,7 +3,7 @@ import sys
 import logging
 import requests
 from flask import Flask, request, jsonify
-from address_printer import parse_address_block, create_address_document, BLOCKS_PER_PAGE
+from address_printer import parse_address_block, create_address_document_multipage, BLOCKS_PER_PAGE
 
 # Logging setup (visible in Render logs)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
@@ -195,9 +195,8 @@ def handle_incoming_message(phone_number, msg_text):
         docx_path = os.path.join("output", docx_filename)
         pdf_path = os.path.join("output", pdf_filename)
         
-        # 1. Generate perfect DOCX from template (this is always pixel-perfect)
-        doc = create_address_document(session['addresses'], session['biller_id'], "prepaidtemplate.docx")
-        doc.save(docx_path)
+        # 1. Generate perfect DOCX using docxtpl placeholder filling
+        create_address_document_multipage(session['addresses'], session['biller_id'], docx_path)
         
         # 2. Convert to PDF using LibreOffice (with Microsoft-compatible fonts installed via Docker)
         try:
