@@ -382,8 +382,22 @@ def create_address_document(addresses, biller_id, template_path):
         # Clone the template table
         new_table = copy.deepcopy(original_table)
         
-        # Fill in the addresses
+        # CRITICAL: Force all row heights to EXACT so rows NEVER expand
+        # This guarantees 3 rows always fit on one page = 6 labels per page
         rows = new_table.findall(qn('w:tr'))
+        for row in rows:
+            trPr = row.find(qn('w:trPr'))
+            if trPr is None:
+                trPr = parse_xml(f'<w:trPr {nsdecls("w")}></w:trPr>')
+                row.insert(0, trPr)
+            trHeight = trPr.find(qn('w:trHeight'))
+            if trHeight is not None:
+                trHeight.set(qn('w:hRule'), 'exact')
+            else:
+                trHeight = parse_xml(f'<w:trHeight {nsdecls("w")} w:val="4526" w:hRule="exact"/>')
+                trPr.append(trHeight)
+        
+        # Fill in the addresses
         block_idx = 0
         
         for row in rows:
@@ -442,21 +456,23 @@ def fill_cell(cell, addr, biller_id):
     # (left-aligned, below address area, above Biller ID)
     
     # Build the "To:" content lines
+    # Font size 20 (10pt) ensures long addresses don't wrap within a paragraph
+    ADDR_SIZE = 20   # 10pt — fits ~50 chars per line in the cell width
+    MAX_LINE_LEN = 45  # break addresses at this length
+    
     to_lines = []
     
     if addr['name']:
         to_lines.append(addr['name'])
     
     if addr['address']:
-        # Split long addresses into ~40 char lines
         address_text = addr['address']
-        while len(address_text) > 45:
-            # Find a good break point
-            break_at = address_text.rfind(',', 0, 45)
+        while len(address_text) > MAX_LINE_LEN:
+            break_at = address_text.rfind(',', 0, MAX_LINE_LEN)
             if break_at == -1:
-                break_at = address_text.rfind(' ', 0, 45)
+                break_at = address_text.rfind(' ', 0, MAX_LINE_LEN)
             if break_at == -1:
-                break_at = 45
+                break_at = MAX_LINE_LEN
             to_lines.append(address_text[:break_at + 1].strip())
             address_text = address_text[break_at + 1:].strip()
         if address_text:
@@ -471,23 +487,26 @@ def fill_cell(cell, addr, biller_id):
     if addr['phone']:
         to_lines.append(f"Mob: {addr['phone']}")
     
+    # Cap at 7 lines (paragraphs 1-7 only) — merge overflow into last line
+    if len(to_lines) > 7:
+        # Merge extra lines into the 7th line
+        to_lines = to_lines[:6] + [', '.join(to_lines[6:])]
+    
     # Fill paragraphs 1-7 with customer address data
     for i in range(1, 8):
         if i - 1 < len(to_lines):
-            # Use size 28 (14pt) to match the template's "To:" header
             set_paragraph_text(paragraphs[i], to_lines[i - 1], 
-                             bold=True, size=28, color="000000")
+                             bold=True, size=ADDR_SIZE, color="000000")
         else:
-            # Clear unused address lines
+            # Clear unused address lines — use same small size
             set_paragraph_text(paragraphs[i], "", 
-                             bold=True, size=28, color="000000")
+                             bold=True, size=ADDR_SIZE, color="000000")
     
     # Insert order info into the empty left space of Para 11 (left of the 'From' address)
     if addr.get('order'):
         order_text = addr['order']
         orig_text = get_paragraph_text(paragraphs[11])
         
-        # Calculate how many spaces to remove so the From address stays relatively aligned
         leading_spaces = len(orig_text) - len(orig_text.lstrip())
         spaces_to_remove = int(len(order_text) * 1.5)
         new_spaces = max(5, leading_spaces - spaces_to_remove)
@@ -495,7 +514,7 @@ def fill_cell(cell, addr, biller_id):
         new_text = order_text + (" " * new_spaces) + orig_text.lstrip()
         set_paragraph_text(paragraphs[11], new_text, bold=True, size=24, color="000000")
     
-    # Update Biller ID (paragraph 13 - still the same element reference)
+    # Update Biller ID (paragraph 13)
     set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
                       bold=True, size=24)
 
@@ -504,11 +523,11 @@ def clear_cell_to_section(cell, biller_id):
     """Clear the To: section of a cell but keep From: and update Biller ID."""
     paragraphs = cell.findall(qn('w:p'))
     
-    # Clear paragraphs 1-7
+    # Clear paragraphs 1-7 (use same small size as fill_cell)
     for i in range(1, 8):
         if i < len(paragraphs):
             set_paragraph_text(paragraphs[i], "",
-                             bold=True, size=22, color="000000")
+                             bold=True, size=20, color="000000")
     
     # Update Biller ID
     if len(paragraphs) > 13:
