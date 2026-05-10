@@ -234,82 +234,64 @@ def parse_address_block(raw_text):
 
 
 # ─── DOCX Generation using docxtpl ───────────────────────────────────────────
+#
+# 12-para structure per block (from user's filled example):
+#   Para 0  sz=28: "To:"                    -- untouched
+#   Para 1  sz=28: Name
+#   Para 2  sz=28: Full address             -- Word auto-wraps within cell
+#   Para 3  sz=28: "Pin:XXXXXX,"
+#   Para 4  sz=28: " Mob:XXXXXXXXXX"
+#   Para 5  sz=28: "" (gap line)            -- untouched
+#   Para 6  sz=28: "[spaces]From:"         -- untouched
+#   Para 7  sz=24: items + CREAM X EMIRATES -- items on left
+#   Para 8  sz=24: PUTHUPALLY, KTM         -- untouched
+#   Para 9  sz=24: Pin: 686011             -- untouched
+#   Para 10 sz=24: Mob: 8129770502         -- untouched
+#   Para 11 sz=24: Biller ID: XXXXXXXXXX
 
-MAX_LINE_LEN = 40  # chars per line in the address block at sz=24
 
+def build_block_context(b, addr, biller_id):
+    """Build the docxtpl context dict for one block slot."""
+    if addr is None:
+        return {
+            f"{b}_name": "",
+            f"{b}_addr": "",
+            f"{b}_pin":  "",
+            f"{b}_mob":  "",
+            f"{b}_order": "",
+            f"{b}_biller": f"Biller ID: {biller_id}",
+        }
 
-def build_address_lines(addr):
-    """Build up to 7 address lines from parsed address fields."""
-    lines = []
+    name    = addr.get('name', '')
+    address = addr.get('address', '')
+    pin     = f"Pin:{addr['pincode']}," if addr.get('pincode') else ''
+    mob     = f" Mob:{addr['phone']}"   if addr.get('phone')   else ''
+    state   = addr.get('state', '')
 
-    if addr['name']:
-        lines.append(addr['name'])
+    # Append state to address if present
+    if state:
+        address = f"{address}, {state}" if address else state
 
-    if addr['address']:
-        text = addr['address']
-        while len(text) > MAX_LINE_LEN:
-            break_at = text.rfind(',', 0, MAX_LINE_LEN)
-            if break_at == -1:
-                break_at = text.rfind(' ', 0, MAX_LINE_LEN)
-            if break_at == -1:
-                break_at = MAX_LINE_LEN
-            lines.append(text[:break_at + 1].strip())
-            text = text[break_at + 1:].strip()
-        if text:
-            lines.append(text)
-
-    if addr['pincode']:
-        lines.append(f"Pin: {addr['pincode']}")
-
-    if addr['state']:
-        lines.append(addr['state'])
-
-    if addr['phone']:
-        lines.append(f"Mob: {addr['phone']}")
-
-    # Merge overflow into last line if more than 7
-    if len(lines) > 7:
-        lines = lines[:6] + [', '.join(lines[6:])]
-
-    # Pad to exactly 7 lines with empty strings
-    while len(lines) < 7:
-        lines.append('')
-
-    return lines
+    return {
+        f"{b}_name":   name,
+        f"{b}_addr":   address,
+        f"{b}_pin":    pin,
+        f"{b}_mob":    mob,
+        f"{b}_order":  addr.get('order', ''),
+        f"{b}_biller": f"Biller ID: {biller_id}",
+    }
 
 
 def create_address_document(addresses, biller_id, template_path=None):
-    """
-    Fill a docxtpl template for one PAGE (up to 6 addresses).
-    Returns a rendered DocxTemplate object.
-    """
+    """Fill one page (up to 6 addresses) and return a rendered DocxTemplate."""
     if template_path is None:
         template_path = TEMPLATE_PATH
 
-    # We generate one page at a time (6 blocks per page)
-    # For multiple pages we create multiple docs and merge (or just return a list)
-    # For now: handle multiple pages by creating separate files or using python-docx merge
-
-    # Build context for all 6 block slots
     context = {}
-    block_order = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
-
-    for slot_idx in range(6):
+    for slot_idx in range(BLOCKS_PER_PAGE):
         b = f"b{slot_idx}"
-        if slot_idx < len(addresses):
-            addr = addresses[slot_idx]
-            lines = build_address_lines(addr)
-        else:
-            lines = [''] * 7
-
-        for line_idx, line_text in enumerate(lines, 1):
-            context[f"{b}_l{line_idx}"] = line_text
-
-        # Order text on the left of "From:" line
-        order = addresses[slot_idx].get('order', '') if slot_idx < len(addresses) else ''
-        context[f"{b}_order"] = order
-
-        context[f"{b}_biller"] = f"Biller ID: {biller_id}"
+        addr = addresses[slot_idx] if slot_idx < len(addresses) else None
+        context.update(build_block_context(b, addr, biller_id))
 
     doc = DocxTemplate(template_path)
     doc.render(context)
