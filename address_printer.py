@@ -440,18 +440,17 @@ def fill_cell(cell, addr, biller_id):
     """Fill a single cell (block) with customer address data."""
     paragraphs = cell.findall(qn('w:p'))
     
-    # Cell structure (14 paragraphs) — matches template exactly:
-    # Para 0:    "To:" header          (sz=28, left)  — untouched
-    # Para 1-7:  Customer address       (sz=24, left)
-    # Para 8:    Order info             (sz=24, left)
-    # Para 9:    "From:"               (sz=24, right)
-    # Para 10:   "CREAM X EMIRATES"    (sz=24, right)
-    # Para 11:   "PUTHUPALLY, KTM"     (sz=24, right)
-    # Para 12:   "Pin: 686011, Mob: 8129770502"  (sz=24, right)
-    # Para 13:   "Biller ID: xxx"      (sz=24, left)
+    # Cell structure (14 paragraphs) — template original:
+    # Para 0:    "To:" header          (sz=28, left-aligned)  — untouched
+    # Para 1-7:  Customer address       (sz=24, left-aligned)
+    # Para 8:    [spaces]"From:"        (sz=28, spaces for right-align) — KEEP TEMPLATE
+    # Para 9:    [spaces]"CREAM X ..."  (sz=24, spaces for right-align) — KEEP TEMPLATE
+    # Para 10:   [spaces]"PUTHUPALLY"   (sz=24, spaces for right-align) — KEEP TEMPLATE
+    # Para 11:   [spaces]"Pin: 686011"  (sz=24, items go on LEFT)       — items inserted here
+    # Para 12:   [spaces]"Mob: ..."     (sz=24, spaces for right-align) — KEEP TEMPLATE
+    # Para 13:   "Biller ID: xxx"       (sz=24, left-aligned)           — updated
     
     ADDR_SIZE = 24   # 12pt for customer address
-    INFO_SIZE = 24   # 12pt for From/Order/Biller (matches template)
     MAX_LINE_LEN = 40
     
     # Build the "To:" content lines
@@ -495,46 +494,43 @@ def fill_cell(cell, addr, biller_id):
             set_paragraph_text(paragraphs[i], "", 
                              bold=True, size=ADDR_SIZE, color="000000")
     
-    # Para 8: Order info (left-aligned)
-    order_text = addr.get('order', '') if addr else ''
-    set_paragraph_text(paragraphs[8], order_text, bold=True, size=INFO_SIZE, color="000000")
+    # Paras 8-10, 12: KEEP ORIGINAL TEMPLATE TEXT (From section with spaces)
+    # DO NOT MODIFY — the template already has perfect spacing
     
-    # Para 9-12: From section (RIGHT-aligned, matching template)
-    set_paragraph_text(paragraphs[9], "From:", bold=True, size=INFO_SIZE, color="000000", align="right")
-    set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=INFO_SIZE, color="000000", align="right")
-    set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM", bold=True, size=INFO_SIZE, color="000000", align="right")
-    set_paragraph_text(paragraphs[12], "Pin: 686011, Mob: 8129770502", bold=True, size=INFO_SIZE, color="000000", align="right")
+    # Para 11: Insert order/items on the LEFT side of the Pin line
+    if addr.get('order'):
+        order_text = addr['order']
+        orig_text = get_paragraph_text(paragraphs[11])
+        
+        # Shorten the leading spaces to make room for items text
+        leading_spaces = len(orig_text) - len(orig_text.lstrip())
+        spaces_to_remove = int(len(order_text) * 1.5)
+        new_spaces = max(5, leading_spaces - spaces_to_remove)
+        
+        new_text = order_text + (" " * new_spaces) + orig_text.lstrip()
+        set_paragraph_text(paragraphs[11], new_text, bold=True, size=24, color="000000")
     
-    # Para 13: Biller ID (left-aligned)
+    # Para 13: Update Biller ID (left-aligned, matching template)
     set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                      bold=True, size=INFO_SIZE, color="000000")
+                      bold=True, size=24, color="000000")
 
 
 def clear_cell_to_section(cell, biller_id):
     """Clear the To: section of a cell but keep From: and update Biller ID."""
     paragraphs = cell.findall(qn('w:p'))
     
-    ADDR_SIZE = 24
-    INFO_SIZE = 24
-    
     # Clear address paragraphs 1-7
     for i in range(1, 8):
         if i < len(paragraphs):
             set_paragraph_text(paragraphs[i], "",
-                             bold=True, size=ADDR_SIZE, color="000000")
+                             bold=True, size=24, color="000000")
     
-    # Rewrite From section right-aligned
-    if len(paragraphs) > 12:
-        set_paragraph_text(paragraphs[8], "", bold=True, size=INFO_SIZE, color="000000")
-        set_paragraph_text(paragraphs[9], "From:", bold=True, size=INFO_SIZE, color="000000", align="right")
-        set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=INFO_SIZE, color="000000", align="right")
-        set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM", bold=True, size=INFO_SIZE, color="000000", align="right")
-        set_paragraph_text(paragraphs[12], "Pin: 686011, Mob: 8129770502", bold=True, size=INFO_SIZE, color="000000", align="right")
+    # Paras 8-12: KEEP ORIGINAL TEMPLATE TEXT — do not modify
     
-    # Update Biller ID
+    # Update Biller ID only
     if len(paragraphs) > 13:
         set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                          bold=True, size=INFO_SIZE, color="000000")
+                          bold=True, size=24, color="000000")
 
 
 def get_paragraph_text(paragraph):
