@@ -152,14 +152,23 @@ def handle_incoming_message(phone_number, msg_text):
             
         send_whatsapp_message(phone_number, f"🔄 Generating label document with {len(session['addresses'])} addresses...")
         
-        import datetime
         import subprocess
         
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        docx_filename = f"addresses_{timestamp}.docx"
-        pdf_filename = f"addresses_{timestamp}.pdf"
-        
+        # Sequential naming: prepaid1, prepaid2, etc.
+        counter_file = os.path.join("output", "batch_counter.txt")
         os.makedirs("output", exist_ok=True)
+        batch_num = 1
+        if os.path.exists(counter_file):
+            try:
+                batch_num = int(open(counter_file).read().strip()) + 1
+            except (ValueError, FileNotFoundError):
+                batch_num = 1
+        with open(counter_file, "w") as f:
+            f.write(str(batch_num))
+        
+        docx_filename = f"prepaid{batch_num}.docx"
+        pdf_filename = f"prepaid{batch_num}.pdf"
+        
         docx_path = os.path.join("output", docx_filename)
         pdf_path = os.path.join("output", pdf_filename)
         

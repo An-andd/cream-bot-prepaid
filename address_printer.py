@@ -438,28 +438,23 @@ def create_address_document(addresses, biller_id, template_path):
 
 def fill_cell(cell, addr, biller_id):
     """Fill a single cell (block) with customer address data."""
-    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-    
     paragraphs = cell.findall(qn('w:p'))
     
-    # The cell structure (14 paragraphs):
-    # Para 0: "To:" header (bold, size 28, black)
-    # Para 1-7: Empty lines for customer address (blue, bold, size 28)
-    # Para 8: "From:" header (bold, size 28)
-    # Para 9: "CREAM X EMIRATES" (bold, size 24)
-    # Para 10: "PUTHUPALLY, KTM" (bold, size 24)
-    # Para 11: "Pin: 686011" (bold, size 24)  
-    # Para 12: "Mob: 8129770502" (bold, size 24)
-    # Para 13: "Biller ID: XXXXXXXXXX" (bold, size 24)
-    #
-    # Order info is inserted as new paragraph between Para 12 and Para 13
-    # (left-aligned, below address area, above Biller ID)
+    # Cell structure (14 paragraphs):
+    # Para 0:    "To:" header
+    # Para 1-7:  Customer address lines
+    # Para 8:    Order info (e.g. "1CXE")
+    # Para 9:    "From:"
+    # Para 10:   "CREAM X EMIRATES"
+    # Para 11:   "PUTHUPALLY, KTM"
+    # Para 12:   "Pin: 686011, Mob: 8129770502"
+    # Para 13:   "Biller ID: XXXXXXXXXX"
+    
+    ADDR_SIZE = 24   # 12pt — readable but fits within row height
+    FROM_SIZE = 20   # 10pt — smaller for From section
+    MAX_LINE_LEN = 40  # break addresses at this length for sz=24
     
     # Build the "To:" content lines
-    # Font size 20 (10pt) ensures long addresses don't wrap within a paragraph
-    ADDR_SIZE = 20   # 10pt — fits ~50 chars per line in the cell width
-    MAX_LINE_LEN = 45  # break addresses at this length
-    
     to_lines = []
     
     if addr['name']:
@@ -489,7 +484,6 @@ def fill_cell(cell, addr, biller_id):
     
     # Cap at 7 lines (paragraphs 1-7 only) — merge overflow into last line
     if len(to_lines) > 7:
-        # Merge extra lines into the 7th line
         to_lines = to_lines[:6] + [', '.join(to_lines[6:])]
     
     # Fill paragraphs 1-7 with customer address data
@@ -498,41 +492,49 @@ def fill_cell(cell, addr, biller_id):
             set_paragraph_text(paragraphs[i], to_lines[i - 1], 
                              bold=True, size=ADDR_SIZE, color="000000")
         else:
-            # Clear unused address lines — use same small size
             set_paragraph_text(paragraphs[i], "", 
                              bold=True, size=ADDR_SIZE, color="000000")
     
-    # Insert order info into the empty left space of Para 11 (left of the 'From' address)
-    if addr.get('order'):
-        order_text = addr['order']
-        orig_text = get_paragraph_text(paragraphs[11])
-        
-        leading_spaces = len(orig_text) - len(orig_text.lstrip())
-        spaces_to_remove = int(len(order_text) * 1.5)
-        new_spaces = max(5, leading_spaces - spaces_to_remove)
-        
-        new_text = order_text + (" " * new_spaces) + orig_text.lstrip()
-        set_paragraph_text(paragraphs[11], new_text, bold=True, size=24, color="000000")
+    # Para 8: Order info (left-aligned, own line)
+    order_text = addr.get('order', '') if addr else ''
+    set_paragraph_text(paragraphs[8], order_text, bold=True, size=FROM_SIZE, color="000000")
     
-    # Update Biller ID (paragraph 13)
+    # Para 9-12: From section (LEFT-aligned, no more leading spaces)
+    set_paragraph_text(paragraphs[9], "From:", bold=True, size=FROM_SIZE, color="000000")
+    set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=FROM_SIZE, color="000000")
+    set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM, Pin: 686011", bold=True, size=FROM_SIZE, color="000000")
+    set_paragraph_text(paragraphs[12], "Mob: 8129770502", bold=True, size=FROM_SIZE, color="000000")
+    
+    # Para 13: Biller ID
     set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                      bold=True, size=24)
+                      bold=True, size=FROM_SIZE, color="000000")
 
 
 def clear_cell_to_section(cell, biller_id):
     """Clear the To: section of a cell but keep From: and update Biller ID."""
     paragraphs = cell.findall(qn('w:p'))
     
-    # Clear paragraphs 1-7 (use same small size as fill_cell)
+    ADDR_SIZE = 24
+    FROM_SIZE = 20
+    
+    # Clear address paragraphs 1-7
     for i in range(1, 8):
         if i < len(paragraphs):
             set_paragraph_text(paragraphs[i], "",
-                             bold=True, size=20, color="000000")
+                             bold=True, size=ADDR_SIZE, color="000000")
+    
+    # Rewrite From section left-aligned (same as fill_cell)
+    if len(paragraphs) > 12:
+        set_paragraph_text(paragraphs[8], "", bold=True, size=FROM_SIZE, color="000000")
+        set_paragraph_text(paragraphs[9], "From:", bold=True, size=FROM_SIZE, color="000000")
+        set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=FROM_SIZE, color="000000")
+        set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM, Pin: 686011", bold=True, size=FROM_SIZE, color="000000")
+        set_paragraph_text(paragraphs[12], "Mob: 8129770502", bold=True, size=FROM_SIZE, color="000000")
     
     # Update Biller ID
     if len(paragraphs) > 13:
         set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                          bold=True, size=24)
+                          bold=True, size=FROM_SIZE, color="000000")
 
 
 def get_paragraph_text(paragraph):
