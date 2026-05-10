@@ -1,9 +1,20 @@
 import os
+import sys
+import logging
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from address_printer import parse_address_block, create_address_document, BLOCKS_PER_PAGE
 
+# Logging setup (visible in Render logs)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", stream=sys.stdout)
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def health():
+    """Health-check endpoint so Render knows the service is alive."""
+    return jsonify({"status": "ok", "service": "cream-prepaid-bot"}), 200
 
 # ==========================================
 # 🔑 SECURITY UPDATE FOR RENDER
@@ -89,22 +100,34 @@ def verify_webhook():
 
 @app.route('/webhook', methods=['POST'])
 def webhook_event():
-    """Handle incoming WhatsApp messages from your iPhone"""
+    """Handle incoming WhatsApp messages."""
     body = request.get_json()
+    logger.info("Webhook POST received")
     
-    if body.get('object'):
-        if body.get('entry') and body['entry'][0].get('changes') and body['entry'][0]['changes'][0].get('value').get('messages'):
-            message_data = body['entry'][0]['changes'][0]['value']['messages'][0]
-            phone_number = message_data['from']
+    if not body:
+        logger.info("Empty body - ignoring")
+        return 'OK', 200
+    
+    try:
+        if body.get('object'):
+            entry = body.get('entry', [{}])[0]
+            changes = entry.get('changes', [{}])[0]
+            value = changes.get('value', {})
+            messages = value.get('messages', [])
             
-            if 'text' in message_data:
-                msg_text = message_data['text']['body'].strip()
-                print(f"Received message from {phone_number}: {msg_text}")
-                handle_incoming_message(phone_number, msg_text)
-                
-        return 'EVENT_RECEIVED', 200
-    else:
-        return 'Not Found', 404
+            for msg in messages:
+                if msg.get('type') == 'text':
+                    phone_number = msg['from']
+                    msg_text = msg['text']['body'].strip()
+                    logger.info(f"Message from {phone_number}: {msg_text}")
+                    handle_incoming_message(phone_number, msg_text)
+                    
+            return 'EVENT_RECEIVED', 200
+        else:
+            return 'Not Found', 404
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return 'OK', 200
 
 def handle_incoming_message(phone_number, msg_text):
     lower_msg = msg_text.lower()

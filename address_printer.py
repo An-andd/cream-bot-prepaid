@@ -440,19 +440,19 @@ def fill_cell(cell, addr, biller_id):
     """Fill a single cell (block) with customer address data."""
     paragraphs = cell.findall(qn('w:p'))
     
-    # Cell structure (14 paragraphs):
-    # Para 0:    "To:" header
-    # Para 1-7:  Customer address lines
-    # Para 8:    Order info (e.g. "1CXE")
-    # Para 9:    "From:"
-    # Para 10:   "CREAM X EMIRATES"
-    # Para 11:   "PUTHUPALLY, KTM"
-    # Para 12:   "Pin: 686011, Mob: 8129770502"
-    # Para 13:   "Biller ID: XXXXXXXXXX"
+    # Cell structure (14 paragraphs) — matches template exactly:
+    # Para 0:    "To:" header          (sz=28, left)  — untouched
+    # Para 1-7:  Customer address       (sz=24, left)
+    # Para 8:    Order info             (sz=24, left)
+    # Para 9:    "From:"               (sz=24, right)
+    # Para 10:   "CREAM X EMIRATES"    (sz=24, right)
+    # Para 11:   "PUTHUPALLY, KTM"     (sz=24, right)
+    # Para 12:   "Pin: 686011, Mob: 8129770502"  (sz=24, right)
+    # Para 13:   "Biller ID: xxx"      (sz=24, left)
     
-    ADDR_SIZE = 24   # 12pt — readable but fits within row height
-    FROM_SIZE = 20   # 10pt — smaller for From section
-    MAX_LINE_LEN = 40  # break addresses at this length for sz=24
+    ADDR_SIZE = 24   # 12pt for customer address
+    INFO_SIZE = 24   # 12pt for From/Order/Biller (matches template)
+    MAX_LINE_LEN = 40
     
     # Build the "To:" content lines
     to_lines = []
@@ -482,7 +482,7 @@ def fill_cell(cell, addr, biller_id):
     if addr['phone']:
         to_lines.append(f"Mob: {addr['phone']}")
     
-    # Cap at 7 lines (paragraphs 1-7 only) — merge overflow into last line
+    # Cap at 7 lines — merge overflow into last line
     if len(to_lines) > 7:
         to_lines = to_lines[:6] + [', '.join(to_lines[6:])]
     
@@ -495,19 +495,19 @@ def fill_cell(cell, addr, biller_id):
             set_paragraph_text(paragraphs[i], "", 
                              bold=True, size=ADDR_SIZE, color="000000")
     
-    # Para 8: Order info (left-aligned, own line)
+    # Para 8: Order info (left-aligned)
     order_text = addr.get('order', '') if addr else ''
-    set_paragraph_text(paragraphs[8], order_text, bold=True, size=FROM_SIZE, color="000000")
+    set_paragraph_text(paragraphs[8], order_text, bold=True, size=INFO_SIZE, color="000000")
     
-    # Para 9-12: From section (LEFT-aligned, no more leading spaces)
-    set_paragraph_text(paragraphs[9], "From:", bold=True, size=FROM_SIZE, color="000000")
-    set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=FROM_SIZE, color="000000")
-    set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM, Pin: 686011", bold=True, size=FROM_SIZE, color="000000")
-    set_paragraph_text(paragraphs[12], "Mob: 8129770502", bold=True, size=FROM_SIZE, color="000000")
+    # Para 9-12: From section (RIGHT-aligned, matching template)
+    set_paragraph_text(paragraphs[9], "From:", bold=True, size=INFO_SIZE, color="000000", align="right")
+    set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=INFO_SIZE, color="000000", align="right")
+    set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM", bold=True, size=INFO_SIZE, color="000000", align="right")
+    set_paragraph_text(paragraphs[12], "Pin: 686011, Mob: 8129770502", bold=True, size=INFO_SIZE, color="000000", align="right")
     
-    # Para 13: Biller ID
+    # Para 13: Biller ID (left-aligned)
     set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                      bold=True, size=FROM_SIZE, color="000000")
+                      bold=True, size=INFO_SIZE, color="000000")
 
 
 def clear_cell_to_section(cell, biller_id):
@@ -515,7 +515,7 @@ def clear_cell_to_section(cell, biller_id):
     paragraphs = cell.findall(qn('w:p'))
     
     ADDR_SIZE = 24
-    FROM_SIZE = 20
+    INFO_SIZE = 24
     
     # Clear address paragraphs 1-7
     for i in range(1, 8):
@@ -523,18 +523,18 @@ def clear_cell_to_section(cell, biller_id):
             set_paragraph_text(paragraphs[i], "",
                              bold=True, size=ADDR_SIZE, color="000000")
     
-    # Rewrite From section left-aligned (same as fill_cell)
+    # Rewrite From section right-aligned
     if len(paragraphs) > 12:
-        set_paragraph_text(paragraphs[8], "", bold=True, size=FROM_SIZE, color="000000")
-        set_paragraph_text(paragraphs[9], "From:", bold=True, size=FROM_SIZE, color="000000")
-        set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=FROM_SIZE, color="000000")
-        set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM, Pin: 686011", bold=True, size=FROM_SIZE, color="000000")
-        set_paragraph_text(paragraphs[12], "Mob: 8129770502", bold=True, size=FROM_SIZE, color="000000")
+        set_paragraph_text(paragraphs[8], "", bold=True, size=INFO_SIZE, color="000000")
+        set_paragraph_text(paragraphs[9], "From:", bold=True, size=INFO_SIZE, color="000000", align="right")
+        set_paragraph_text(paragraphs[10], "CREAM X EMIRATES", bold=True, size=INFO_SIZE, color="000000", align="right")
+        set_paragraph_text(paragraphs[11], "PUTHUPALLY, KTM", bold=True, size=INFO_SIZE, color="000000", align="right")
+        set_paragraph_text(paragraphs[12], "Pin: 686011, Mob: 8129770502", bold=True, size=INFO_SIZE, color="000000", align="right")
     
     # Update Biller ID
     if len(paragraphs) > 13:
         set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
-                          bold=True, size=FROM_SIZE, color="000000")
+                          bold=True, size=INFO_SIZE, color="000000")
 
 
 def get_paragraph_text(paragraph):
@@ -546,9 +546,23 @@ def get_paragraph_text(paragraph):
             texts.append(t.text)
     return ''.join(texts)
 
-def set_paragraph_text(paragraph, text, bold=False, size=None, color=None):
-    """Set the text of a paragraph, preserving the paragraph properties but replacing runs."""
-    ns_uri = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+def set_paragraph_text(paragraph, text, bold=False, size=None, color=None, align=None):
+    """Set the text of a paragraph, preserving the paragraph properties but replacing runs.
+    align: 'left', 'right', 'center', or None to keep existing."""
+    
+    # Set paragraph alignment if specified
+    if align:
+        pPr = paragraph.find(qn('w:pPr'))
+        if pPr is None:
+            pPr = parse_xml(f'<w:pPr {nsdecls("w")}></w:pPr>')
+            paragraph.insert(0, pPr)
+        # Remove existing alignment
+        existing_jc = pPr.find(qn('w:jc'))
+        if existing_jc is not None:
+            pPr.remove(existing_jc)
+        # Add new alignment
+        jc = parse_xml(f'<w:jc {nsdecls("w")} w:val="{align}"/>')
+        pPr.append(jc)
     
     # Remove all existing runs
     runs = paragraph.findall(qn('w:r'))
