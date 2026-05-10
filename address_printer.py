@@ -441,16 +441,17 @@ def fill_cell(cell, addr, biller_id):
     paragraphs = cell.findall(qn('w:p'))
     
     # Cell structure (14 paragraphs) — template original:
-    # Para 0:    "To:" header          (sz=28, left-aligned)  — untouched
-    # Para 1-7:  Customer address       (sz=24, left-aligned)
-    # Para 8:    [spaces]"From:"        (sz=28, spaces for right-align) — KEEP TEMPLATE
-    # Para 9:    [spaces]"CREAM X ..."  (sz=24, spaces for right-align) — KEEP TEMPLATE
-    # Para 10:   [spaces]"PUTHUPALLY"   (sz=24, spaces for right-align) — KEEP TEMPLATE
-    # Para 11:   [spaces]"Pin: 686011"  (sz=24, items go on LEFT)       — items inserted here
-    # Para 12:   [spaces]"Mob: ..."     (sz=24, spaces for right-align) — KEEP TEMPLATE
-    # Para 13:   "Biller ID: xxx"       (sz=24, left-aligned)           — updated
+    # Para 0:    "To:" header          (sz=28)  — untouched
+    # Para 1-7:  Customer address       (sz=24 filled / sz=28 empty)
+    # Para 8:    [items][spaces]"From:" (sz=28)  — items inserted on LEFT
+    # Para 9:    [spaces]"CREAM X ..."  (sz=24)  — KEEP TEMPLATE
+    # Para 10:   [spaces]"PUTHUPALLY"   (sz=24)  — KEEP TEMPLATE
+    # Para 11:   [spaces]"Pin: 686011"  (sz=24)  — KEEP TEMPLATE
+    # Para 12:   [spaces]"Mob: ..."     (sz=24)  — KEEP TEMPLATE
+    # Para 13:   "Biller ID: xxx"       (sz=24)  — updated
     
-    ADDR_SIZE = 24   # 12pt for customer address
+    ADDR_SIZE = 24   # 12pt for filled address lines
+    EMPTY_SIZE = 28  # 14pt for empty lines (matches template, fills vertical space)
     MAX_LINE_LEN = 40
     
     # Build the "To:" content lines
@@ -488,27 +489,32 @@ def fill_cell(cell, addr, biller_id):
     # Fill paragraphs 1-7 with customer address data
     for i in range(1, 8):
         if i - 1 < len(to_lines):
+            # Filled line: use sz=24 for readability
             set_paragraph_text(paragraphs[i], to_lines[i - 1], 
                              bold=True, size=ADDR_SIZE, color="000000")
         else:
+            # Empty line: use sz=28 (template size) to fill vertical space
+            # This eliminates the gap below Biller ID
             set_paragraph_text(paragraphs[i], "", 
-                             bold=True, size=ADDR_SIZE, color="000000")
+                             bold=True, size=EMPTY_SIZE, color="000000")
     
-    # Paras 8-10, 12: KEEP ORIGINAL TEMPLATE TEXT (From section with spaces)
-    # DO NOT MODIFY — the template already has perfect spacing
-    
-    # Para 11: Insert order/items on the LEFT side of the Pin line
+    # Para 8: Insert items on the LEFT side of the "From:" line
+    # This keeps paras 9-12 (CREAM X, PUTHUPALLY, Pin, Mob) perfectly aligned
     if addr.get('order'):
         order_text = addr['order']
-        orig_text = get_paragraph_text(paragraphs[11])
+        orig_text = get_paragraph_text(paragraphs[8])
         
-        # Shorten the leading spaces to make room for items text
+        # Original: "                                                From:"
+        # New:      "1CXE                                            From:"
         leading_spaces = len(orig_text) - len(orig_text.lstrip())
         spaces_to_remove = int(len(order_text) * 1.5)
         new_spaces = max(5, leading_spaces - spaces_to_remove)
         
         new_text = order_text + (" " * new_spaces) + orig_text.lstrip()
-        set_paragraph_text(paragraphs[11], new_text, bold=True, size=24, color="000000")
+        set_paragraph_text(paragraphs[8], new_text, bold=True, size=28, color="000000")
+    
+    # Paras 9-12: KEEP ORIGINAL TEMPLATE TEXT — do not modify
+    # This preserves perfect alignment of From section
     
     # Para 13: Update Biller ID (left-aligned, matching template)
     set_paragraph_text(paragraphs[13], f"Biller ID: {biller_id}",
@@ -519,11 +525,11 @@ def clear_cell_to_section(cell, biller_id):
     """Clear the To: section of a cell but keep From: and update Biller ID."""
     paragraphs = cell.findall(qn('w:p'))
     
-    # Clear address paragraphs 1-7
+    # Clear address paragraphs 1-7 with template size (sz=28)
     for i in range(1, 8):
         if i < len(paragraphs):
             set_paragraph_text(paragraphs[i], "",
-                             bold=True, size=24, color="000000")
+                             bold=True, size=28, color="000000")
     
     # Paras 8-12: KEEP ORIGINAL TEMPLATE TEXT — do not modify
     
