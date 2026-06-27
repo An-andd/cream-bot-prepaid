@@ -5,8 +5,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# LibreOffice + Microsoft-compatible fonts for accurate DOCX → PDF conversion.
-# This is the EXACT same setup as the working COD bot.
+# LibreOffice + Microsoft-compatible fonts for accurate DOCX → PDF conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-writer \
@@ -23,5 +22,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Build the Jinja2 template from kunjii.docx at image build time
+RUN python build_template.py
+
+# Create the output directory for generated PDFs/DOCXs
+RUN mkdir -p output
 
 CMD ["sh", "-c", "gunicorn app:app --bind 0.0.0.0:${PORT:-10000}"]

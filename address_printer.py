@@ -4,20 +4,38 @@ Prepaid Address Printer Automation
 Automates printing of customer addresses from WhatsApp messages
 into a DOCX template with 6 address blocks per page, then exports to PDF.
 
-Approach: docxtpl placeholder filling — template formatting is NEVER touched,
-only the placeholder text is replaced. This guarantees pixel-perfect output.
+Template: prepaidtemplate_tpl.docx  (built from kunjii.docx via build_template.py)
+
+Cell para structure (11 paragraphs, copied from kunjii.docx reference cell):
+  Para 0 : "To:"                           <- untouched
+  Para 1 : {{ bN_name }}                   <- customer name
+  Para 2 : {{ bN_addr }}                   <- full address (Word wraps)
+  Para 3 : {{ bN_pin }}{{ bN_mob }}        <- "Pin:XXXXXX," + " Mob:XXXXXXXXXX"
+  Para 4 : ""                              <- gap (untouched)
+  Para 5 : "[spaces]From:"                 <- untouched
+  Para 6 : "[spaces]CREAM X EMIRATES"      <- untouched
+  Para 7 : "[spaces]PUTHUPALLY, KTM"       <- untouched
+  Para 8 : "[spaces]Pin: 686011"           <- untouched
+  Para 9 : "[spaces]Mob: 8129770502"       <- untouched
+  Para 10: {{ bN_biller }}                 <- "Biller ID: XXXXXXXXXX"
+
+Approach: docxtpl placeholder filling - template formatting is NEVER modified,
+only the placeholder text is replaced. Guarantees pixel-perfect output.
 """
 
 import re
 import os
 import sys
+import copy
 import datetime
 from docxtpl import DocxTemplate
 
-# ─── Configuration ───────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prepaidtemplate_tpl.docx")
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+OUTPUT_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
 BILLER_IDS = {
     "1": "1260357626",
@@ -31,9 +49,11 @@ BILLER_LABELS = {
     "3": "1624036027 (alternative 2)",
 }
 
-BLOCKS_PER_PAGE = 6  # 3 rows × 2 columns
+BLOCKS_PER_PAGE = 6  # 3 rows x 2 columns
 
-# ─── Address Parsing ─────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Address Parsing
+# ---------------------------------------------------------------------------
 
 INDIAN_STATES = {
     'andhra pradesh', 'arunachal pradesh', 'assam', 'bihar', 'chhattisgarh',
@@ -120,23 +140,6 @@ def normalize_state(text):
     if cleaned in STATE_MISSPELLINGS:
         return STATE_MISSPELLINGS[cleaned]
     return text.strip().title()
-
-
-def abbreviate_order(text):
-    if not text:
-        return text
-    replacements = [
-        (r'(?<![a-zA-Z])vit(?:amin)?\s*c\s*face\s*wash\b', 'Vit C FW'),
-        (r'(?<![a-zA-Z])vit(?:amin)?\s*c\s*facewash\b', 'Vit C FW'),
-        (r'(?<![a-zA-Z])body\s*lotion\b', 'BL'),
-        (r'(?<![a-zA-Z])face\s*wash\b', 'FW'),
-        (r'(?<![a-zA-Z])facewash\b', 'FW'),
-        (r'(?<![a-zA-Z])cxe\b', 'CXE'),
-    ]
-    result = text
-    for pattern, replacement in replacements:
-        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-    return result.upper()
 
 
 def parse_address_block(raw_text):
@@ -228,69 +231,62 @@ def parse_address_block(raw_text):
         address_lines = address_lines[1:]
 
     result['address'] = ', '.join(address_lines) if address_lines else ''
-    result['order'] = abbreviate_order(', '.join(order_lines)) if order_lines else ''
+    result['order'] = ', '.join(order_lines).upper() if order_lines else ''
 
     return result
 
 
-# ─── DOCX Generation using docxtpl ───────────────────────────────────────────
-#
-# 12-para structure per block (from user's filled example):
-#   Para 0  sz=28: "To:"                    -- untouched
-#   Para 1  sz=28: Name
-#   Para 2  sz=28: Full address             -- Word auto-wraps within cell
-#   Para 3  sz=28: "Pin:XXXXXX,"
-#   Para 4  sz=28: " Mob:XXXXXXXXXX"
-#   Para 5  sz=28: "" (gap line)            -- untouched
-#   Para 6  sz=28: "[spaces]From:"         -- untouched
-#   Para 7  sz=24: items + CREAM X EMIRATES -- items on left
-#   Para 8  sz=24: PUTHUPALLY, KTM         -- untouched
-#   Para 9  sz=24: Pin: 686011             -- untouched
-#   Para 10 sz=24: Mob: 8129770502         -- untouched
-#   Para 11 sz=24: Biller ID: XXXXXXXXXX
-
+# ---------------------------------------------------------------------------
+# DOCX Generation using docxtpl
+# ---------------------------------------------------------------------------
 
 def build_block_context(b, addr, biller_id):
-    """Build the docxtpl context dict for one block slot."""
+    """Build the docxtpl context dict for one block slot.
+
+    The kunjii template uses:
+      Para 2: {{ bN_addr }}         <- address only (state appended here)
+      Para 3: {{ bN_pin }}{{ bN_mob }}  <- pin + mob on same line
+    """
     if addr is None:
         return {
-            f"{b}_name": "",
-            f"{b}_addr": "",
-            f"{b}_pin":  "",
-            f"{b}_mob":  "",
-            f"{b}_order": "",
+            f"{b}_name":   "",
+            f"{b}_addr":   "",
+            f"{b}_pin":    "",
+            f"{b}_mob":    "",
+            f"{b}_order":  "",
             f"{b}_biller": f"Biller ID: {biller_id}",
         }
 
     name    = addr.get('name', '')
-    address = addr.get('address', '')
-    pin     = f"Pin:{addr['pincode']}," if addr.get('pincode') else ''
-    mob     = f" Mob:{addr['phone']}"   if addr.get('phone')   else ''
     state   = addr.get('state', '')
+    address = addr.get('address', '')
 
-    # Append state to address if present
+    # Combine address + state into one field (Word auto-wraps)
     if state:
         address = f"{address}, {state}" if address else state
+
+    pin = f"Pin:{addr['pincode']}," if addr.get('pincode') else ''
+    mob = f" Mob:{addr['phone']}"   if addr.get('phone')   else ''
 
     return {
         f"{b}_name":   name,
         f"{b}_addr":   address,
         f"{b}_pin":    pin,
         f"{b}_mob":    mob,
-        f"{b}_order":  addr.get('order', ''),
+        f"{b}_order":  addr.get('order', '').upper(),
         f"{b}_biller": f"Biller ID: {biller_id}",
     }
 
 
-def create_address_document(addresses, biller_id, template_path=None):
-    """Fill one page (up to 6 addresses) and return a rendered DocxTemplate."""
+def render_one_page(page_addresses, biller_id, template_path=None):
+    """Render a single page (up to 6 addresses) as a DocxTemplate."""
     if template_path is None:
         template_path = TEMPLATE_PATH
 
     context = {}
     for slot_idx in range(BLOCKS_PER_PAGE):
-        b = f"b{slot_idx}"
-        addr = addresses[slot_idx] if slot_idx < len(addresses) else None
+        b    = f"b{slot_idx}"
+        addr = page_addresses[slot_idx] if slot_idx < len(page_addresses) else None
         context.update(build_block_context(b, addr, biller_id))
 
     doc = DocxTemplate(template_path)
@@ -301,9 +297,13 @@ def create_address_document(addresses, biller_id, template_path=None):
 def create_address_document_multipage(addresses, biller_id, output_path, template_path=None):
     """
     Generate the full output DOCX for all addresses (multiple pages if needed).
-    For simplicity: generate one file per page, then combine using python-docx.
+
+    Strategy for multi-page:
+      - Render each page separately into a temp file
+      - Merge subsequent pages by copying their <w:tbl> into the base document,
+        separated by a page-break paragraph that preserves A4 page settings.
     """
-    import copy
+    import tempfile
     from docx import Document as DocxDocument
     from docx.oxml.ns import qn
     from docx.oxml import parse_xml
@@ -312,51 +312,53 @@ def create_address_document_multipage(addresses, biller_id, output_path, templat
     if template_path is None:
         template_path = TEMPLATE_PATH
 
-    num_pages = (len(addresses) + BLOCKS_PER_PAGE - 1) // BLOCKS_PER_PAGE
+    num_pages = max(1, (len(addresses) + BLOCKS_PER_PAGE - 1) // BLOCKS_PER_PAGE)
 
+    # Single page — fast path
     if num_pages == 1:
-        doc = create_address_document(addresses[:6], biller_id, template_path)
+        doc = render_one_page(addresses[:BLOCKS_PER_PAGE], biller_id, template_path)
         doc.save(output_path)
         return
 
-    # Multiple pages: render each page and merge tables into one doc
-    import tempfile, os
-
+    # Multi-page: render each page to a temp DOCX then merge
     page_files = []
     for page_idx in range(num_pages):
-        start = page_idx * BLOCKS_PER_PAGE
-        page_addrs = addresses[start:start + BLOCKS_PER_PAGE]
-        doc = create_address_document(page_addrs, biller_id, template_path)
-        tmp = tempfile.NamedTemporaryFile(suffix='.docx', delete=False)
+        start      = page_idx * BLOCKS_PER_PAGE
+        page_addrs = addresses[start : start + BLOCKS_PER_PAGE]
+        doc        = render_one_page(page_addrs, biller_id, template_path)
+        tmp        = tempfile.NamedTemporaryFile(suffix='.docx', delete=False)
         tmp.close()
         doc.save(tmp.name)
         page_files.append(tmp.name)
 
-    # Merge: take first page as base, append tables from subsequent pages
-    base = DocxDocument(page_files[0])
+    # Load the first page as the base document
+    base     = DocxDocument(page_files[0])
     base_body = base.element.body
 
     for page_file in page_files[1:]:
-        extra = DocxDocument(page_file)
+        extra      = DocxDocument(page_file)
         extra_body = extra.element.body
 
-        # Add page break paragraph
-        pg_break = parse_xml(
+        # Page-break paragraph that also carries A4 sectPr (keeps dimensions correct)
+        pg_break_xml = (
             f'<w:p {nsdecls("w")}>'
-            f'  <w:pPr><w:sectPr>'
-            f'    <w:pgSz w:w="11906" w:h="16838"/>'
-            f'    <w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>'
-            f'  </w:sectPr></w:pPr>'
+            f'  <w:pPr>'
+            f'    <w:sectPr>'
+            f'      <w:pgSz w:w="11906" w:h="16838"/>'
+            f'      <w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/>'
+            f'    </w:sectPr>'
+            f'  </w:pPr>'
             f'</w:p>'
         )
-        # Insert before sectPr
+        pg_break = parse_xml(pg_break_xml)
+
         sect = base_body.find(qn('w:sectPr'))
         if sect is not None:
             sect.addprevious(pg_break)
         else:
             base_body.append(pg_break)
 
-        # Copy table from extra page
+        # Copy the table from the extra page
         for tbl in extra_body.findall(qn('w:tbl')):
             tbl_copy = copy.deepcopy(tbl)
             if sect is not None:
@@ -366,12 +368,17 @@ def create_address_document_multipage(addresses, biller_id, output_path, templat
 
     # Clean up temp files
     for f in page_files:
-        os.unlink(f)
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
 
     base.save(output_path)
 
 
-# ─── PDF Conversion ──────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# PDF Conversion
+# ---------------------------------------------------------------------------
 
 def convert_to_pdf(docx_path, pdf_path):
     """Convert DOCX to PDF using docx2pdf (requires MS Word on Windows)."""
@@ -382,11 +389,13 @@ def convert_to_pdf(docx_path, pdf_path):
     except Exception as e:
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
             return True
-        print(f"\n⚠️  PDF conversion error: {e}")
+        print(f"\n[WARNING] PDF conversion error: {e}")
         return False
 
 
-# ─── Main Interactive Loop ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Interactive CLI
+# ---------------------------------------------------------------------------
 
 def print_banner():
     print()
@@ -414,7 +423,7 @@ def print_address_list(addresses):
     print(f"\n  [LIST] Current Address List ({len(addresses)} total):")
     print("  " + "-" * 58)
     for i, addr in enumerate(addresses, 1):
-        name = addr['name'] or '(no name)'
+        name    = addr['name'] or '(no name)'
         address = addr['address'] or '(no address)'
         if len(address) > 40:
             address = address[:37] + "..."
@@ -448,6 +457,13 @@ def handle_delete(addresses, command):
 def main():
     print_banner()
 
+    # Check template exists
+    if not os.path.exists(TEMPLATE_PATH):
+        print(f"[ERROR] Template not found: {TEMPLATE_PATH}")
+        print("        Run: python build_template.py   to generate it first.")
+        sys.exit(1)
+
+    # --- Step 1: Wait for 'start' ---
     while True:
         user_input = input("Type 'start' to begin a new batch: ").strip().lower()
         if user_input == 'start':
@@ -459,6 +475,8 @@ def main():
             print("  [ERROR] Please type 'start' to begin or 'exit' to quit.")
 
     print("\n[SETUP] Started new batch setup.")
+
+    # --- Step 2: Choose Biller ID ---
     print("\n  Choose biller option:")
     print("  1 - 1260357626 (default)")
     print("  2 - 1264602129 (alternative 1)")
@@ -473,6 +491,7 @@ def main():
         else:
             print("  [ERROR] Invalid choice. Please enter 1, 2, or 3.")
 
+    # --- Step 3: Collect addresses ---
     addresses = []
     print("\n" + "-" * 62)
     print("Paste customer addresses below.")
@@ -482,9 +501,9 @@ def main():
 
     while True:
         print(f"\nAddress #{len(addresses) + 1} (or type 'stop' / 'list' / 'undo' / 'delete N'):")
-        lines = []
+        lines       = []
         empty_count = 0
-        stripped = ''
+        stripped    = ''
 
         while True:
             try:
@@ -532,22 +551,22 @@ def main():
                 continue
 
         raw_text = '\n'.join(lines)
-        parsed = parse_address_block(raw_text)
+        parsed   = parse_address_block(raw_text)
         addresses.append(parsed)
         print_parsed_address(parsed, len(addresses))
         print(f"\n  Total addresses: {len(addresses)}")
         pages_needed = (len(addresses) + BLOCKS_PER_PAGE - 1) // BLOCKS_PER_PAGE
         print(f"  Pages needed: {pages_needed} ({BLOCKS_PER_PAGE} addresses per page)")
 
-    # Generate output
+    # --- Step 4: Generate document ---
     print("\n" + "=" * 62)
     print(f"[GENERATING] Document with {len(addresses)} addresses...")
-    print(f"   Biller ID: {biller_id}")
+    print(f"   Biller ID : {biller_id}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     docx_path = os.path.join(OUTPUT_DIR, f"addresses_{timestamp}.docx")
-    pdf_path = os.path.join(OUTPUT_DIR, f"addresses_{timestamp}.pdf")
+    pdf_path  = os.path.join(OUTPUT_DIR, f"addresses_{timestamp}.pdf")
 
     create_address_document_multipage(addresses, biller_id, docx_path)
     print(f"\n  [SAVED] DOCX: {docx_path}")
@@ -562,7 +581,11 @@ def main():
         except Exception:
             pass
     else:
-        print(f"  [INFO] Open the DOCX manually: {docx_path}")
+        print(f"  [INFO] PDF conversion failed. Opening DOCX: {docx_path}")
+        try:
+            os.startfile(docx_path)
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

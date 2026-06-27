@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated output (PDFs, DOCXs produced at runtime)
+output/
+
+# Generated template (built from kunjii.docx by build_template.py)
+prepaidtemplate_tpl.docx
+
+# Environment / secrets
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose*.yml
+compose*.yml
