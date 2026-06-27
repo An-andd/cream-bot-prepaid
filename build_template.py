@@ -4,23 +4,29 @@ build_template.py
 Builds 'prepaidtemplate_tpl.docx' from 'kunjii.docx'.
 
 Strategy:
-  - Cell[0][0] is the REFERENCE cell (has the correct 11-para structure + formatting).
-  - We deep-copy it into ALL 6 cells, then INSERT 2 blank gap paragraphs between
-    the address block (pin/mob) and the order line, giving a 2-line visual gap.
-  - Final para structure per cell (13 paragraphs after insertion):
-      0:  "To:"                              <- untouched
-      1:  name placeholder                   <- {{ bN_name }}
-      2:  address placeholder                <- {{ bN_addr }}
-      3:  pin + mob line                     <- {{ bN_pin }}{{ bN_mob }}
-      4:  "" (blank gap 1)                   <- inserted
-      5:  "" (blank gap 2)                   <- inserted
-      6:  order items line                   <- {{ bN_order }}  (e.g. "3CXe", "1 CXE, 1 BL")
-      7:  "        From:"                    <- untouched
-      8:  "        CREAM X EMIRATES "        <- untouched
-      9:  "        PUTHUPALLY, KTM"          <- untouched
-     10:  "        Pin: 686011"              <- untouched
-     11:  "        Mob: 8129770502"          <- untouched
-     12:  "Biller ID: ..."                   <- {{ bN_biller }}
+  - Cell[0][0] supplies Paras 0-4 (To:, name, addr, pin/mob, blank).
+  - Cell[0][1] supplies the From section (Paras 7-12) — its spacing is correct
+    (Cell[0][0]'s CREAM X EMIRATES has 85 chars which wraps; Cell[0][1] has 73).
+  - We INSERT 2 extra address line paragraphs (a2, a3) after Para 2 so the
+    address is displayed across 3 separate lines instead of one long wrapped line.
+  - We INSERT 2 blank gap paragraphs between the address block and the order line.
+
+Final para structure per cell (15 paragraphs):
+      0:  "To:"                           <- untouched
+      1:  {{ bN_name }}
+      2:  {{ bN_a1 }}                     <- address line 1 (street)
+      3:  {{ bN_a2 }}                     <- address line 2 (area/landmark)
+      4:  {{ bN_a3 }}                     <- address line 3 (city, state)
+      5:  {{ bN_pin }}{{ bN_mob }}
+      6:  "" blank gap 1                  <- inserted
+      7:  "" blank gap 2                  <- inserted
+      8:  {{ bN_order }}                  <- product line e.g. "3CXE"
+      9:  "[spaces]From:"                 <- from Cell[0][1], untouched
+     10:  "[spaces]CREAM X EMIRATES"      <- from Cell[0][1], untouched
+     11:  "[spaces]PUTHUPALLY, KTM"       <- untouched
+     12:  "[spaces]Pin: 686011"           <- untouched
+     13:  "[spaces]Mob: 8129770502"       <- untouched
+     14:  {{ bN_biller }}
 """
 
 import copy
@@ -31,169 +37,161 @@ TEMPLATE_IN  = 'kunjii.docx'
 TEMPLATE_OUT = 'prepaidtemplate_tpl.docx'
 
 
-def get_full_text(para):
+def get_text(para):
     ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
     return ''.join(t.text or '' for t in para.findall('.//w:t', ns))
 
 
 def set_para_text(para, new_text, ref_run=None):
     """
-    Replace text in a paragraph's first run while preserving ALL formatting.
-    Extra runs are removed. xml:space='preserve' is set.
-
-    If the paragraph has no runs (e.g. an empty gap para), a run is cloned
-    from ref_run (should be the name-run from the reference cell) so the
-    order text inherits the same font/size formatting.
+    Set the text of a paragraph's first run, preserving formatting.
+    If the paragraph has no runs, clone ref_run (inherits font/size).
     """
     from docx.oxml import parse_xml
     from docx.oxml.ns import nsdecls
 
     runs = para.findall(qn('w:r'))
-
     if not runs:
-        # Paragraph has no run — clone formatting from ref_run if provided
         if ref_run is not None:
             new_run = copy.deepcopy(ref_run)
-            # Clear any existing <w:t> text in the cloned run
-            t_existing = new_run.find(qn('w:t'))
-            if t_existing is not None:
-                new_run.remove(t_existing)
+            t_ex = new_run.find(qn('w:t'))
+            if t_ex is not None:
+                new_run.remove(t_ex)
         else:
-            # Bare minimum run with no formatting
             new_run = parse_xml(f'<w:r {nsdecls("w")}></w:r>')
         para.append(new_run)
         runs = [new_run]
 
-    # Keep the first run, remove the rest
     first_run = runs[0]
     for r in runs[1:]:
         para.remove(r)
 
-    # Get or create the <w:t> element
     t_el = first_run.find(qn('w:t'))
     if t_el is None:
-        t_el_str = f'<w:t {nsdecls("w")} xml:space="preserve"></w:t>'
-        t_el = parse_xml(t_el_str)
+        from docx.oxml.ns import nsdecls as nd
+        t_el = parse_xml(f'<w:t {nd("w")} xml:space="preserve"></w:t>')
         first_run.append(t_el)
 
     t_el.text = new_text
     t_el.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
 
 
-def inject_placeholders(cell_xml, cell_paras, b):
+def build_cell(cell_xml, ref_addr_paras, ref_from_paras, b):
     """
-    Inject Jinja2 placeholders and insert 2 blank gap paragraphs between
-    the address block (pin/mob) and the order line.
-
-    After insertion the final layout is:
-      Para 0:  To:          (untouched)
-      Para 1:  {{ bN_name }}
-      Para 2:  {{ bN_addr }}
-      Para 3:  {{ bN_pin }}{{ bN_mob }}
-      Para 4:  "" (blank gap 1)  <- inserted
-      Para 5:  "" (blank gap 2)  <- inserted
-      Para 6:  {{ bN_order }}
-      Para 7:  From:        (untouched)
-      Para 8:  CREAM X EMIRATES (untouched)
-      Para 9:  PUTHUPALLY   (untouched)
-      Para 10: Pin: 686011  (untouched)
-      Para 11: Mob: 8129770502 (untouched)
-      Para 12: {{ bN_biller }}
+    Build one label cell:
+      ref_addr_paras  — Paras 0-4 from Cell[0][0] (To:, name, addr, pin/mob, blank)
+      ref_from_paras  — Paras 7-12 from Cell[0][1] (From section with correct spacing)
     """
-    # Para 1 -> name
-    set_para_text(cell_paras[1], f'{{{{ {b}_name }}}}')
-    # Para 2 -> address
-    set_para_text(cell_paras[2], f'{{{{ {b}_addr }}}}')
-    # Para 3 -> pin + mob
-    set_para_text(cell_paras[3], f'{{{{ {b}_pin }}}}{{{{ {b}_mob }}}}')
+    # Remove all existing paragraphs
+    for p in cell_xml.findall(qn('w:p')):
+        cell_xml.remove(p)
 
-    # --- Insert 2 blank paragraphs BEFORE Para 4 (the order slot) ---
-    # Clone the gap para (Para 4, currently blank) twice and insert before it.
-    blank_1 = copy.deepcopy(cell_paras[4])
-    blank_2 = copy.deepcopy(cell_paras[4])
-    # addprevious inserts immediately before cell_paras[4] each time:
-    #   after first:  [..., 3:pin/mob, 4:blank_1, 5:cell_paras[4], 6:From, ...]
-    #   after second: [..., 3:pin/mob, 4:blank_1, 5:blank_2, 6:cell_paras[4], 7:From, ...]
-    cell_paras[4].addprevious(blank_1)
-    cell_paras[4].addprevious(blank_2)
+    # --- Address section: copy Paras 0-4 from Cell[0][0] ---
+    # Para 0: To:     (copy as-is)
+    # Para 1: name    (will set placeholder)
+    # Para 2: addr1   (will set placeholder)
+    # Para 3: pin/mob (will set placeholder) — we clone this to make addr2, addr3
+    # Para 4: blank   (will be used for blank gaps and order)
+    for src in ref_addr_paras:
+        cell_xml.append(copy.deepcopy(src))
 
-    # Refresh para list after insertion (cell_paras is now stale)
-    new_paras = cell_xml.findall(qn('w:p'))
+    paras = cell_xml.findall(qn('w:p'))
+    # paras[0]=To:  [1]=name  [2]=addr  [3]=pin/mob  [4]=blank
 
-    # Para 6 (original Para 4) -> order
-    # It has no runs, so clone the name run for correct formatting.
-    ref_run = new_paras[1].findall(qn('w:r'))
+    # Get a reference run for formatting (from name para)
+    ref_run = paras[1].findall(qn('w:r'))
     ref_run = ref_run[0] if ref_run else None
-    set_para_text(new_paras[6], f'{{{{ {b}_order }}}}', ref_run=ref_run)
 
-    # Para 12 (original Para 10) -> biller
-    set_para_text(new_paras[12], f'{{{{ {b}_biller }}}}')
+    # Set name placeholder
+    set_para_text(paras[1], f'{{{{ {b}_name }}}}')
+
+    # Set addr line 1 placeholder (use original Para 2)
+    set_para_text(paras[2], f'{{{{ {b}_a1 }}}}')
+
+    # Insert addr line 2 (clone of Para 2) BEFORE Para 3
+    addr2 = copy.deepcopy(paras[2])
+    paras[3].addprevious(addr2)
+    # Insert addr line 3 (clone of Para 2) BEFORE Para 3
+    addr3 = copy.deepcopy(paras[2])
+    paras[3].addprevious(addr3)
+
+    # Refresh — paras[3] is now addr2, paras[4] is addr3, paras[5] is old pin/mob, paras[6] is blank
+    paras = cell_xml.findall(qn('w:p'))
+    set_para_text(paras[3], f'{{{{ {b}_a2 }}}}', ref_run=ref_run)
+    set_para_text(paras[4], f'{{{{ {b}_a3 }}}}', ref_run=ref_run)
+
+    # Para 5 (original Para 3): pin + mob
+    set_para_text(paras[5], f'{{{{ {b}_pin }}}}{{{{ {b}_mob }}}}')
+
+    # Para 6 (original Para 4): blank — insert 2 more blank lines before it for gap
+    blank_gap = paras[6]  # this is the blank para
+    gap1 = copy.deepcopy(blank_gap)
+    gap2 = copy.deepcopy(blank_gap)
+    blank_gap.addprevious(gap1)
+    blank_gap.addprevious(gap2)
+
+    # Refresh — gap1=Para6, gap2=Para7, blank_gap=Para8 (becomes order)
+    paras = cell_xml.findall(qn('w:p'))
+    # Para 8 = original blank -> set as order
+    set_para_text(paras[8], f'{{{{ {b}_order }}}}', ref_run=ref_run)
+
+    # --- From section: copy Paras 7-12 from Cell[0][1] ---
+    # These have the correct spacing (73 chars for CREAM X EMIRATES, not 85)
+    for src in ref_from_paras:
+        cell_xml.append(copy.deepcopy(src))
+
+    # The biller ID is the LAST paragraph (index 14)
+    paras = cell_xml.findall(qn('w:p'))
+    set_para_text(paras[14], f'{{{{ {b}_biller }}}}')
+
+    return len(paras)
 
 
 def main():
     doc = Document(TEMPLATE_IN)
     table = doc.tables[0]
 
-    # Grab the reference cell (row 0, col 0) - has correct 11-para structure
-    ref_cell = table.rows[0].cells[0]
-    ref_cell_xml = ref_cell._tc  # the <w:tc> element
-    ref_paras_xml = ref_cell_xml.findall(qn('w:p'))
+    # --- Extract reference paragraphs ---
+    # Cell[0][0]: address section (Paras 0-4: To:, name, addr, pin/mob, blank)
+    cell00_xml = table.rows[0].cells[0]._tc
+    all00 = cell00_xml.findall(qn('w:p'))
+    ref_addr_paras = all00[0:5]   # Paras 0-4
 
-    print(f"Reference cell: {len(ref_paras_xml)} paragraphs")
-    for i, p in enumerate(ref_paras_xml):
-        print(f"  Para {i}: [{get_full_text(p)[:60]}]")
+    # Cell[0][1]: From section (Paras 7-12: From:, CREAM, PUTHUPALLY, Pin, Mob, BillerID)
+    cell01_xml = table.rows[0].cells[1]._tc
+    all01 = cell01_xml.findall(qn('w:p'))
+    ref_from_paras = all01[7:13]  # Paras 7-12 (From section with correct spacing)
 
-    # Block positions: (row_idx, col_idx)
-    block_positions = [
-        (0, 0), (0, 1),
-        (1, 0), (1, 1),
-        (2, 0), (2, 1),
-    ]
+    print('Reference addr paras (from Cell[0][0]):')
+    for i, p in enumerate(ref_addr_paras):
+        print(f'  [{i}] {repr(get_text(p)[:60])}')
+    print('Reference From paras (from Cell[0][1]):')
+    for i, p in enumerate(ref_from_paras):
+        print(f'  [{i+7}] {repr(get_text(p)[:70])}')
 
+    # --- Build all 6 cells ---
+    block_positions = [(0,0),(0,1),(1,0),(1,1),(2,0),(2,1)]
     for block_idx, (ri, ci) in enumerate(block_positions):
         b = f'b{block_idx}'
-        cell = table.rows[ri].cells[ci]
-        cell_xml = cell._tc
-
-        # Remove all existing paragraphs from this cell
-        for p in cell_xml.findall(qn('w:p')):
-            cell_xml.remove(p)
-
-        # Deep-copy the 11 paragraphs from the reference cell
-        # Find where to insert (before any <w:tcPr> or at end)
-        for src_para in ref_paras_xml:
-            new_para = copy.deepcopy(src_para)
-            cell_xml.append(new_para)
-
-        # Now inject Jinja2 placeholders (also inserts 2 blank gap paras)
-        new_paras = cell_xml.findall(qn('w:p'))
-        inject_placeholders(cell_xml, new_paras, b)
-        # After injection, cell has 13 paragraphs
-        final_count = len(cell_xml.findall(qn('w:p')))
-        print(f"  Block {block_idx} ({ri},{ci}) done -> {final_count} paras")
+        cell_xml = table.rows[ri].cells[ci]._tc
+        n = build_cell(cell_xml, ref_addr_paras, ref_from_paras, b)
+        print(f'  Block {block_idx} ({ri},{ci}) -> {n} paras')
 
     doc.save(TEMPLATE_OUT)
-    print(f"\n[DONE] Saved: {TEMPLATE_OUT}")
+    print(f'\n[DONE] Saved: {TEMPLATE_OUT}')
 
-    # Verify
-    print("\n--- Verification ---")
+    # --- Verify ---
+    print('\n--- Verification ---')
     doc2 = Document(TEMPLATE_OUT)
     table2 = doc2.tables[0]
     for block_idx, (ri, ci) in enumerate(block_positions):
-        cell = table2.rows[ri].cells[ci]
-        paras = cell.paragraphs
-        b = f'b{block_idx}'
-        p1  = paras[1].text  if len(paras) >  1 else '?'
-        p2  = paras[2].text  if len(paras) >  2 else '?'
-        p3  = paras[3].text  if len(paras) >  3 else '?'
-        p4  = paras[4].text  if len(paras) >  4 else '?'  # blank gap 1
-        p5  = paras[5].text  if len(paras) >  5 else '?'  # blank gap 2
-        p6  = paras[6].text  if len(paras) >  6 else '?'  # order
-        p12 = paras[12].text if len(paras) > 12 else '?'  # biller
+        paras = table2.rows[ri].cells[ci].paragraphs
+        n = len(paras)
+        p = lambda i: paras[i].text[:28] if n > i else '?'
         print(
-            f"  Block {block_idx} ({len(paras)} paras): "
-            f"name=[{p1[:22]}] pin/mob=[{p3[:22]}] "
-            f"gap=['{p4}','{p5}'] order=[{p6[:15]}] biller=[{p12[:22]}]"
+            f'  Block {block_idx} ({n}p): '
+            f'name=[{p(1)}] a1=[{p(2)}] a2=[{p(3)}] a3=[{p(4)}] '
+            f'pin=[{p(5)}] order=[{p(8)}] biller=[{p(14)}]'
         )
 
 

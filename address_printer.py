@@ -230,8 +230,9 @@ def parse_address_block(raw_text):
         result['name'] = address_lines[0]
         address_lines = address_lines[1:]
 
-    result['address'] = ', '.join(address_lines) if address_lines else ''
-    result['order'] = ', '.join(order_lines).upper() if order_lines else ''
+    result['address']       = ', '.join(address_lines) if address_lines else ''
+    result['address_lines'] = address_lines  # keep raw list for multi-line display
+    result['order']         = ', '.join(order_lines).upper() if order_lines else ''
 
     return result
 
@@ -240,37 +241,86 @@ def parse_address_block(raw_text):
 # DOCX Generation using docxtpl
 # ---------------------------------------------------------------------------
 
-def build_block_context(b, addr, biller_id):
-    """Build the docxtpl context dict for one block slot.
+def _split_address_lines(address_lines, state):
+    """
+    Split address into exactly 3 display lines that fit comfortably in the cell.
 
-    The kunjii template uses:
-      Para 2: {{ bN_addr }}         <- address only (state appended here)
-      Para 3: {{ bN_pin }}{{ bN_mob }}  <- pin + mob on same line
+    Strategy:
+      a1 = first raw line  (street / door no)
+      a2 = second raw line joined with third if short (area / landmark)
+      a3 = remaining parts + state  (city, state)
+    """
+    # Flatten any comma-separated parts in the first line into sub-parts
+    parts = []
+    for raw_line in address_lines:
+        parts.extend([p.strip() for p in raw_line.split(',') if p.strip()])
+
+    if not parts:
+        a1, a2, a3 = '', '', state
+    elif len(parts) == 1:
+        a1, a2, a3 = parts[0], '', state
+    elif len(parts) == 2:
+        a1, a2, a3 = parts[0], parts[1], state
+    elif len(parts) == 3:
+        a1, a2, a3 = parts[0], parts[1], f"{parts[2]}, {state}" if state else parts[2]
+    else:
+        # 4+ parts: pack first 2 into a1 if combined length <= 40 chars, else separate
+        if len(parts[0]) + len(parts[1]) + 2 <= 42:
+            a1 = f"{parts[0]}, {parts[1]}"
+            mid = parts[2:-1]
+            last = parts[-1]
+        else:
+            a1 = parts[0]
+            mid = parts[1:-1]
+            last = parts[-1]
+        a2 = ', '.join(mid) if mid else ''
+        a3 = f"{last}, {state}" if state else last
+
+    return a1, a2, a3
+
+
+def build_block_context(b, addr, biller_id):
+    """
+    Build the docxtpl context dict for one block slot.
+
+    Template structure (15 paras per cell):
+      Para 2: {{ bN_a1 }}  address line 1
+      Para 3: {{ bN_a2 }}  address line 2
+      Para 4: {{ bN_a3 }}  address line 3 (city, state)
+      Para 5: {{ bN_pin }}{{ bN_mob }}
+      Para 8: {{ bN_order }}
+      Para 14: {{ bN_biller }}
     """
     if addr is None:
         return {
             f"{b}_name":   "",
-            f"{b}_addr":   "",
+            f"{b}_a1":     "",
+            f"{b}_a2":     "",
+            f"{b}_a3":     "",
             f"{b}_pin":    "",
             f"{b}_mob":    "",
             f"{b}_order":  "",
             f"{b}_biller": f"Biller ID: {biller_id}",
         }
 
-    name    = addr.get('name', '')
-    state   = addr.get('state', '')
-    address = addr.get('address', '')
+    name         = addr.get('name', '')
+    state        = addr.get('state', '')
+    address_lines = addr.get('address_lines', [])
 
-    # Combine address + state into one field (Word auto-wraps)
-    if state:
-        address = f"{address}, {state}" if address else state
+    # If address_lines is empty but address string exists, split it
+    if not address_lines and addr.get('address'):
+        address_lines = [s.strip() for s in addr['address'].split(',') if s.strip()]
+
+    a1, a2, a3 = _split_address_lines(address_lines, state)
 
     pin = f"Pin:{addr['pincode']}," if addr.get('pincode') else ''
     mob = f" Mob:{addr['phone']}"   if addr.get('phone')   else ''
 
     return {
         f"{b}_name":   name,
-        f"{b}_addr":   address,
+        f"{b}_a1":     a1,
+        f"{b}_a2":     a2,
+        f"{b}_a3":     a3,
         f"{b}_pin":    pin,
         f"{b}_mob":    mob,
         f"{b}_order":  addr.get('order', '').upper(),
