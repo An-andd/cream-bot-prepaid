@@ -241,91 +241,53 @@ def parse_address_block(raw_text):
 # DOCX Generation using docxtpl
 # ---------------------------------------------------------------------------
 
-def _split_address_lines(address_lines, state):
-    """
-    Split address into exactly 3 display lines that fit comfortably in the cell.
-
-    Strategy:
-      a1 = first raw line  (street / door no)
-      a2 = second raw line joined with third if short (area / landmark)
-      a3 = remaining parts + state  (city, state)
-    """
-    # Flatten any comma-separated parts in the first line into sub-parts
-    parts = []
-    for raw_line in address_lines:
-        parts.extend([p.strip() for p in raw_line.split(',') if p.strip()])
-
-    if not parts:
-        a1, a2, a3 = '', '', state
-    elif len(parts) == 1:
-        a1, a2, a3 = parts[0], '', state
-    elif len(parts) == 2:
-        a1, a2, a3 = parts[0], parts[1], state
-    elif len(parts) == 3:
-        a1, a2, a3 = parts[0], parts[1], f"{parts[2]}, {state}" if state else parts[2]
-    else:
-        # 4+ parts: pack first 2 into a1 if combined length <= 40 chars, else separate
-        if len(parts[0]) + len(parts[1]) + 2 <= 42:
-            a1 = f"{parts[0]}, {parts[1]}"
-            mid = parts[2:-1]
-            last = parts[-1]
-        else:
-            a1 = parts[0]
-            mid = parts[1:-1]
-            last = parts[-1]
-        a2 = ', '.join(mid) if mid else ''
-        a3 = f"{last}, {state}" if state else last
-
-    return a1, a2, a3
-
 
 def build_block_context(b, addr, biller_id):
     """
     Build the docxtpl context dict for one block slot.
 
-    Template structure (15 paras per cell):
-      Para 2: {{ bN_a1 }}  address line 1
-      Para 3: {{ bN_a2 }}  address line 2
-      Para 4: {{ bN_a3 }}  address line 3 (city, state)
-      Para 5: {{ bN_pin }}{{ bN_mob }}
-      Para 8: {{ bN_order }}
-      Para 14: {{ bN_biller }}
+    Template structure (15 paras per cell) matching kunjii.docx layout:
+      Para 1:  {{ bN_name }}   customer name
+      Para 2:  {{ bN_addr }}   street address (may wrap)
+      Para 3:  {{ bN_pin }}    "Pin: 600094"
+      Para 4:  {{ bN_state }}  "Tamil Nadu"
+      Para 5:  {{ bN_mob }}    "Mob: 9790551399"
+      Para 7:  {{ bN_order }}  "3CXE"
+      Para 14: {{ bN_biller }} "Biller ID: 1260357626"
     """
     if addr is None:
         return {
             f"{b}_name":   "",
-            f"{b}_a1":     "",
-            f"{b}_a2":     "",
-            f"{b}_a3":     "",
+            f"{b}_addr":   "",
             f"{b}_pin":    "",
+            f"{b}_state":  "",
             f"{b}_mob":    "",
             f"{b}_order":  "",
             f"{b}_biller": f"Biller ID: {biller_id}",
         }
 
-    name         = addr.get('name', '')
-    state        = addr.get('state', '')
+    name  = addr.get('name', '')
+    state = addr.get('state', '')
+
+    # Street address: join address lines WITHOUT state/pin (those are separate fields)
     address_lines = addr.get('address_lines', [])
-
-    # If address_lines is empty but address string exists, split it
     if not address_lines and addr.get('address'):
-        address_lines = [s.strip() for s in addr['address'].split(',') if s.strip()]
+        address_lines = [addr['address']]
+    street = ', '.join(address_lines) if address_lines else ''
 
-    a1, a2, a3 = _split_address_lines(address_lines, state)
-
-    pin = f"Pin:{addr['pincode']}," if addr.get('pincode') else ''
-    mob = f" Mob:{addr['phone']}"   if addr.get('phone')   else ''
+    pin = f"Pin: {addr['pincode']}"  if addr.get('pincode') else ''
+    mob = f"Mob: {addr['phone']}"    if addr.get('phone')   else ''
 
     return {
         f"{b}_name":   name,
-        f"{b}_a1":     a1,
-        f"{b}_a2":     a2,
-        f"{b}_a3":     a3,
+        f"{b}_addr":   street,
         f"{b}_pin":    pin,
+        f"{b}_state":  state,
         f"{b}_mob":    mob,
         f"{b}_order":  addr.get('order', '').upper(),
         f"{b}_biller": f"Biller ID: {biller_id}",
     }
+
 
 
 def render_one_page(page_addresses, biller_id, template_path=None):
