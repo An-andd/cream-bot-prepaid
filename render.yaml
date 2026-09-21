@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: cream-prepaid-labels
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app.server:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: ALLOWED_SENDERS
+        sync: false
+      - key: BILLERS
+        sync: false
+      - key: SENDER_NAME
+        value: CREAM X EMIRATES
+      - key: SENDER_ADDRESS
+        value: PUTHUPALLY, KTM
+      - key: SENDER_PIN
+        value: "686011"
+      - key: SENDER_PHONE
+        value: "8129770502"
+      - key: OUTPUT_DIR
+        value: /tmp/cream_labels
+      - key: DB_PATH
+        value: /tmp/cream_prepaid.sqlite3
