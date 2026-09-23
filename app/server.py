@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import requests
 
 from flask import Flask, jsonify, request, send_file
 
