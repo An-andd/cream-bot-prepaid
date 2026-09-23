@@ -8,6 +8,7 @@ from flask import Flask, jsonify, request, send_file
 from . import bot, config, store, woo
 from .labels import render_pdf
 from .parsing import parse_orders
+from . import telegram
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -86,7 +87,63 @@ def _handle_one(message: dict) -> None:
 
 
 # ------------------------------------------------------------ helper routes
+@app.post("/telegram-webhook")
+def telegram_webhook():
 
+    # Verify Telegram's secret header
+    secret = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token",
+        ""
+    )
+
+    if config.TELEGRAM_WEBHOOK_SECRET:
+        if secret != config.TELEGRAM_WEBHOOK_SECRET:
+            return "forbidden", 403
+
+    data = request.get_json(silent=True) or {}
+
+    try:
+        message = data.get("message", {}) or {}
+
+        chat = message.get("chat", {}) or {}
+        chat_id = chat.get("id")
+
+        if chat_id is None:
+            return jsonify(status="ignored"), 200
+
+        text = message.get("text", "")
+
+        if not text:
+            telegram.send_text(
+                str(chat_id),
+                "Please send the prepaid addresses as text messages."
+            )
+            return jsonify(status="received"), 200
+
+        chat_id = str(chat_id)
+
+        if (
+            config.TELEGRAM_ALLOWED_CHAT_IDS
+            and chat_id not in config.TELEGRAM_ALLOWED_CHAT_IDS
+        ):
+            log.warning(
+                "Ignoring Telegram message from unauthorized chat %s",
+                chat_id,
+            )
+            return jsonify(status="ignored"), 200
+
+        log.info(
+            "Telegram <%s>: %s",
+            chat_id,
+            text.replace("\n", " | ")[:200],
+        )
+
+        bot.handle_message(chat_id, text)
+
+    except Exception:
+        log.exception("Telegram webhook processing failed")
+
+    return jsonify(status="received"), 200
 
 @app.post("/render")
 def render_endpoint():
@@ -114,3 +171,53 @@ def parse_endpoint():
 if __name__ == "__main__":  # local dev only; Render uses gunicorn
     import os
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+
+@app.get("/telegram/setup")
+def telegram_setup():
+
+    if not config.TELEGRAM_TOKEN:
+        return jsonify(
+            error="TELEGRAM_TOKEN is not configured"
+        ), 500
+
+    webhook_url = (
+        request.url_root.rstrip("/")
+        + "/telegram-webhook"
+    )
+
+    url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/setWebhook"
+
+    payload = {
+        "url": webhook_url,
+        "secret_token": config.TELEGRAM_WEBHOOK_SECRET,
+        "drop_pending_updates": True,
+        "allowed_updates": ["message"],
+    }
+
+    r = requests.post(
+        url,
+        json=payload,
+        timeout=30,
+    )
+
+    return jsonify(
+        webhook_url=webhook_url,
+        telegram_response=r.json(),
+    )
+
+@app.get("/telegram/status")
+def telegram_status():
+
+    if not config.TELEGRAM_TOKEN:
+        return jsonify(
+            error="TELEGRAM_TOKEN is not configured"
+        ), 500
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{config.TELEGRAM_TOKEN}/getWebhookInfo"
+    )
+
+    r = requests.get(url, timeout=30)
+
+    return jsonify(r.json())

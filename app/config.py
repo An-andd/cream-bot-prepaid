@@ -118,6 +118,21 @@ WOO_COD_METHODS = [
     s.strip().lower() for s in _env("WOO_COD_METHODS", "cod,cash on delivery").split(",") if s.strip()
 ]
 
+# ---------------------------------------------------------------- woocommerce
+# ---------------------------------------------------------------- telegram
+
+TELEGRAM_TOKEN = _env("TELEGRAM_TOKEN")
+
+TELEGRAM_WEBHOOK_SECRET = _env(
+    "TELEGRAM_WEBHOOK_SECRET",
+    "cream-prepaid-telegram-secret"
+)
+
+TELEGRAM_ALLOWED_CHAT_IDS = [
+    x.strip()
+    for x in _env("TELEGRAM_ALLOWED_CHAT_IDS").split(",")
+    if x.strip()
+]
 # ---------------------------------------------------------------- storage
 DB_PATH = _env("DB_PATH", "/tmp/cream_prepaid.sqlite3")
 OUTPUT_DIR = _env("OUTPUT_DIR", "/tmp/cream_labels")

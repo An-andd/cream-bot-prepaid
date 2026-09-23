@@ -6,7 +6,7 @@ import logging
 import os
 import re
 
-from . import config, store, whatsapp, woo
+from . import config, store, telegram as whatsapp, woo
 from .labels import render_pdf
 from .parsing import Order, parse_orders
 
