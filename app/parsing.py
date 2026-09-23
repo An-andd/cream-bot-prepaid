@@ -285,33 +285,115 @@ def normalize_pincode(raw: str) -> str:
 
 
 def _looks_like_product(line: str) -> tuple[str, str] | None:
-    """Return (product_text, note) when the line is a product line."""
-    text = line.strip().rstrip(".")
-    note = ""
-    # trailing note: "1cxe. Return", "2cxe Dtdc"
-    parts = re.split(r"[.,;]| {1,}", text)
-    tail = parts[-1].strip().lower() if parts else ""
-    if tail in config.NOTE_WORDS and len(parts) > 1:
-        note = parts[-1].strip()
-        text = text[: text.lower().rfind(tail)].strip(" .,;")
-    if not text:
+    products, note = _looks_like_products(line)
+    if not products:
         return None
-    if text.lower() in config.NOTE_WORDS:
-        return ("", text)
-    m = _PRODUCT_RE.match(text)
-    if m:
-        qty, code = m.group(1), m.group(2)
-        return (f"{qty}{code}", note)
-    m = _PRODUCT_REV_RE.match(text)
-    if m and m.group(1).lower() in config.KNOWN_PRODUCTS:
-        return (f"{m.group(2)}{m.group(1)}", note)
-    low = text.lower()
-    for prod in config.KNOWN_PRODUCTS:
-        m = re.match(rf"^(\d{{1,4}})\s*{re.escape(prod)}s?$", low)
-        if m:
-            return (f"{m.group(1)}{prod}", note)
-    return None
+    return products[0], note
 
+
+def _looks_like_products(line: str) -> tuple[list[str], str]:
+    """Parse one or multiple product/quantity entries."""
+
+    text = line.strip().rstrip(".")
+    if not text:
+        return [], ""
+
+    note = ""
+
+    # Detect a trailing note such as:
+    # 1 CXE Return
+    # 1 CXE, 1 BL Dtdc
+    note_match = re.search(
+        r"(?:^|[\s,.;])("
+        + "|".join(re.escape(w) for w in config.NOTE_WORDS)
+        + r")\s*$",
+        text,
+        re.IGNORECASE,
+    )
+
+    if note_match:
+        note = note_match.group(1)
+        text = text[:note_match.start()].strip(" .,;")
+
+    if not text:
+        return [], note
+
+    # Multiple products can be separated by commas.
+    chunks = [
+        c.strip()
+        for c in re.split(r"[,;]+", text)
+        if c.strip()
+    ]
+
+    if not chunks:
+        return [], note
+
+    parsed = []
+
+    for chunk in chunks:
+
+        # Examples:
+        # 1cxe
+        # 10cxe
+        # 3*CXE
+        m = _PRODUCT_RE.fullmatch(chunk)
+
+        if m:
+            qty, code = m.group(1), m.group(2)
+            parsed.append(f"{qty}{code}")
+            continue
+
+        # Example:
+        # CXE x 2
+        m = _PRODUCT_REV_RE.fullmatch(chunk)
+
+        if m and m.group(1).lower() in config.KNOWN_PRODUCTS:
+            parsed.append(f"{m.group(2)}{m.group(1)}")
+            continue
+
+        # Known product names
+        low = chunk.lower().strip()
+
+        matched = False
+
+        for prod in config.KNOWN_PRODUCTS:
+            m = re.fullmatch(
+                rf"(\d{{1,4}})\s*(?:x\s*)?{re.escape(prod)}s?",
+                low,
+            )
+
+            if m:
+                parsed.append(f"{m.group(1)}{prod}")
+                matched = True
+                break
+
+        if matched:
+            continue
+
+        # Free-form product:
+        # 1 Salicyclic Serum
+        # 2 Vit C Gel
+        #
+        # Requiring a space after the quantity prevents
+        # "1st floor" from becoming a product.
+        m = re.fullmatch(
+            r"(\d{1,4})\s+(?:x\s+)?(.+?)",
+            chunk,
+            re.IGNORECASE,
+        )
+
+        if m:
+            qty, name = m.group(1), m.group(2).strip()
+
+            if name and not re.search(r"[/:]", name):
+                parsed.append(f"{qty} {name}")
+                continue
+
+        # If even one chunk isn't a product, don't steal
+        # the entire line from the address.
+        return [], note
+
+    return parsed, note
 
 def _normalize_line(line: str) -> str:
     """Repair the small typing quirks that break naive label matching."""
@@ -464,13 +546,14 @@ def parse_block(block: list[str]) -> Order:
         if _SENDER_JUNK_RE.match(line) and not order.name:
             continue
 
-        prod = _looks_like_product(line)
-        if prod and (order.name or unlabelled):
-            text, note = prod
-            if text:
-                order.items.append(text)
-            if note:
-                order.note = (order.note + " " + note).strip()
+        products, prod_note = _looks_like_products(line)
+
+        if products and (order.name or unlabelled):
+            order.items.extend(products)
+
+            if prod_note:
+               order.note = (order.note + " " + prod_note).strip()
+
             continue
 
         for fieldname, value in _split_labelled(line):
@@ -505,10 +588,14 @@ def parse_block(block: list[str]) -> Order:
             elif fieldname == "phone":
                 order.phones.extend(normalize_phones(value))
             elif fieldname == "product":
-                p = _looks_like_product(value)
-                order.items.append(p[0] if p and p[0] else value)
-                if p and p[1]:
-                    order.note = (order.note + " " + p[1]).strip()
+                products, prod_note = _looks_like_products(value)
+
+                if products:
+                    order.items.extend(products)
+                else:
+                    order.items.append(value)
+                if prod_note:
+                    order.note = (order.note + " " + prod_note).strip()
             elif fieldname == "note":
                 order.note = (order.note + " " + value).strip()
             else:

@@ -89,6 +89,7 @@ def build_from_lines(biller_id: str) -> list[Line]:
     if config.SENDER_PHONE:
         lines.append((f"Mob: {config.SENDER_PHONE}", False))
     if biller_id:
+        lines.append(("", False))
         lines.append((f"Biller ID: {biller_id}", False))
     return lines
 
