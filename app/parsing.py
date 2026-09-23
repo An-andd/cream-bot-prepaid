@@ -515,9 +515,10 @@ def split_blocks(text: str) -> list[list[str]]:
         if _BILLER_RE.match(line):
             continue
         if not line:
-            if cur and _block_has_name(cur):
-                flush()
-            continue
+    # Blank lines can occur between the phone number and product/quantity.
+    # Do not split the customer block here. A new customer is detected
+    # reliably by the next Name: line or To: marker.
+           continue
         if _is_name_start(line) and _block_has_name(cur):
             flush()
         cur.append(line)
