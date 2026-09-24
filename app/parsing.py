@@ -219,7 +219,22 @@ _STRONG_COMMA_RE = re.compile(
 )
 
 _PIN_RE = re.compile(r"(?<!\d)(\d{3}\s?\d{3})(?!\d)")
+_BARE_PIN_RE = re.compile(r"^\s*(\d{3})\s?(\d{3})\s*[.,;]?\s*$")
 _DIGITS_RE = re.compile(r"\d")
+
+# Indian states/UTs. Used only when the customer sends the state without
+# writing "State:". This prevents it from being swallowed into the address.
+_STATES = {
+    "andhra pradesh", "arunachal pradesh", "assam", "bihar", "chhattisgarh",
+    "goa", "gujarat", "haryana", "himachal pradesh", "jharkhand", "karnataka",
+    "kerala", "madhya pradesh", "maharashtra", "manipur", "meghalaya",
+    "mizoram", "nagaland", "odisha", "orissa", "punjab", "rajasthan",
+    "sikkim", "tamil nadu", "tamilnadu", "telangana", "tripura",
+    "uttar pradesh", "uttarakhand", "west bengal",
+    "andaman and nicobar islands", "chandigarh", "dadra and nagar haveli",
+    "daman and diu", "delhi", "jammu and kashmir", "ladakh",
+    "lakshadweep", "puducherry", "pondicherry",
+}
 
 
 # ------------------------------------------------------------------ utilities
@@ -282,6 +297,29 @@ def _trim_cc(digits: str) -> str:
 def normalize_pincode(raw: str) -> str:
     m = _PIN_RE.search(raw or "")
     return re.sub(r"\s", "", m.group(1)) if m else ""
+
+
+def _bare_pincode(line: str) -> str:
+    m = _BARE_PIN_RE.fullmatch(line)
+    return f"{m.group(1)}{m.group(2)}" if m else ""
+
+def _extract_pincode(line: str) -> tuple[str, str]:
+    """Extract a six-digit pincode and return (pin, remaining text)."""
+    m = _PIN_RE.search(line or "")
+    if not m:
+        return "", line
+    pin = re.sub(r"\s", "", m.group(1))
+    remaining = (line[:m.start()] + " " + line[m.end():]).strip(" ,;.-")
+    return pin, _clean(remaining)
+
+def _state_from_text(value: str) -> str:
+    low = _clean(value).lower().replace(".", "")
+    low = re.sub(r"\s+", " ", low)
+    if low in _STATES:
+        # Preserve the spelling used by the customer except for the common
+        # Tamilnadu spelling, which is kept as-is for the label.
+        return _clean(value)
+    return ""
 
 
 def _looks_like_product(line: str) -> tuple[str, str] | None:
@@ -515,10 +553,9 @@ def split_blocks(text: str) -> list[list[str]]:
         if _BILLER_RE.match(line):
             continue
         if not line:
-    # Blank lines can occur between the phone number and product/quantity.
-    # Do not split the customer block here. A new customer is detected
-    # reliably by the next Name: line or To: marker.
-           continue
+            if cur and _block_has_name(cur):
+                flush()
+            continue
         if _is_name_start(line) and _block_has_name(cur):
             flush()
         cur.append(line)
@@ -533,10 +570,67 @@ def _block_has_name(block: list[str]) -> bool:
 # --------------------------------------------------------------- block parser
 
 
+def _add_product(order: Order, products: list[str], note: str = "") -> None:
+    for product in products:
+        if product and product not in order.items:
+            order.items.append(product)
+    if note:
+        order.note = (order.note + " " + note).strip()
+
+
+def _classify_unlabelled(order: Order, value: str) -> None:
+    """Classify a line that did not have an explicit field label."""
+    value = _clean(value)
+    if not value:
+        return
+
+    # A bare six-digit number is always a pincode, never an address line.
+    pin = _bare_pincode(value)
+    if pin:
+        if not order.pincode:
+            order.pincode = pin
+        return
+
+    # State supplied on its own, e.g. "Tamilnadu".
+    state = _state_from_text(value)
+    if state:
+        if not order.state:
+            order.state = state
+        return
+
+    # A pincode embedded in an otherwise useful line. Keep the remaining
+    # address text instead of printing the pincode twice.
+    pin, remaining = _extract_pincode(value)
+    if pin:
+        if not order.pincode:
+            order.pincode = pin
+        if not remaining:
+            return
+        value = remaining
+
+    # Bare phone number.
+    if _is_bare_phone(value):
+        order.phones.extend(normalize_phones(value))
+        return
+
+    # Quantity/product lines such as "1cxe", "3 CXE", or "1cxe yesterday".
+    products, prod_note = _looks_like_products(value)
+    if products and (order.name or order.address_lines):
+        _add_product(order, products, prod_note)
+        return
+
+    # If no name exists yet, the first unlabelled line is the most likely name.
+    if not order.name and not order.address_lines:
+        order.name = _strip_trailing_dot(value)
+        return
+
+    # Everything else is genuine address text.
+    order.address_lines.append(_strip_trailing_dot(value))
+
+
 def parse_block(block: list[str]) -> Order:
     order = Order()
     unlabelled: list[str] = []
-    address_started = False
 
     for raw in block:
         line = _normalize_line(_clean(raw))
@@ -547,95 +641,114 @@ def parse_block(block: list[str]) -> Order:
         if _SENDER_JUNK_RE.match(line) and not order.name:
             continue
 
+        # Product lines can appear without a "Product:" label. Only classify
+        # them as products after we have seen a customer/name or address.
         products, prod_note = _looks_like_products(line)
-
-        if products and (order.name or unlabelled):
-            order.items.extend(products)
-
-            if prod_note:
-               order.note = (order.note + " " + prod_note).strip()
-
+        if products and (order.name or unlabelled or order.address_lines):
+            _add_product(order, products, prod_note)
             continue
 
         for fieldname, value in _split_labelled(line):
             value = _clean(value)
+
             if fieldname is None:
-                if not value:
-                    continue
-                unlabelled.append(value)
+                if value:
+                    unlabelled.append(value)
                 continue
+
             if not value:
-                # e.g. a bare "Address:" line; the value follows underneath
-                if fieldname == "address":
-                    address_started = True
                 continue
+
             if fieldname == "name" and not order.name:
                 order.name = _strip_trailing_dot(value)
+
             elif fieldname == "address":
-                address_started = True
-                order.address_lines.append(_strip_trailing_dot(value))
+                pin, remaining = _extract_pincode(value)
+                if pin and not order.pincode:
+                    order.pincode = pin
+                if remaining:
+                    order.address_lines.append(_strip_trailing_dot(remaining))
+
             elif fieldname == "district" and not order.district:
                 order.district = _strip_trailing_dot(value)
+
             elif fieldname == "place" and not order.place:
                 order.place = _strip_trailing_dot(value)
+
             elif fieldname == "state" and not order.state:
                 order.state = _strip_trailing_dot(value)
+
             elif fieldname == "pincode":
                 pin = normalize_pincode(value)
                 if pin and not order.pincode:
                     order.pincode = pin
                 elif not pin:
                     unlabelled.append(value)
+
             elif fieldname == "phone":
                 order.phones.extend(normalize_phones(value))
+
             elif fieldname == "product":
                 products, prod_note = _looks_like_products(value)
-
                 if products:
-                    order.items.extend(products)
+                    _add_product(order, products, prod_note)
                 else:
                     order.items.append(value)
-                if prod_note:
-                    order.note = (order.note + " " + prod_note).strip()
+                    if prod_note:
+                        order.note = (order.note + " " + prod_note).strip()
+
             elif fieldname == "note":
                 order.note = (order.note + " " + value).strip()
+
             else:
                 unlabelled.append(value)
 
-    # ---- fold the unlabelled leftovers back in, losing nothing -------------
+    # Do this only after all labelled fields are known. That way a bare state
+    # or pincode is no longer accidentally appended to the address.
     for value in unlabelled:
-        low = value.lower().strip(" .")
-        if low in config.NOTE_WORDS:
-            order.note = (order.note + " " + value).strip()
-            continue
-        bare_phone = normalize_phones(value) if _is_bare_phone(value) else []
-        if bare_phone:
-            order.phones.extend(bare_phone)
-            continue
-        if not order.name and address_started is False and not order.address_lines:
-            order.name = _strip_trailing_dot(value)
-            continue
-        order.address_lines.append(_strip_trailing_dot(value))
+        _classify_unlabelled(order, value)
 
-    # ---- last-chance pincode: hidden inside an address line ---------------
+    # Last chance: a pincode may have been attached to an address/place line.
     if not order.pincode:
-        for line in order.address_lines + [order.district, order.place, order.state]:
-            pin = normalize_pincode(line)
+        for i, line in enumerate(order.address_lines):
+            pin, remaining = _extract_pincode(line)
             if pin:
                 order.pincode = pin
+                if remaining:
+                    order.address_lines[i] = remaining
+                else:
+                    order.address_lines.pop(i)
                 break
 
-    # dedupe phones, drop empties
+    # Remove any bare state/pincode lines that may have arrived through an
+    # explicitly-labelled Address block.
+    cleaned_address = []
+    for line in order.address_lines:
+        line = _strip_trailing_dot(_clean(line))
+        if not line:
+            continue
+        pin = _bare_pincode(line)
+        if pin:
+            if not order.pincode:
+                order.pincode = pin
+            continue
+        state = _state_from_text(line)
+        if state:
+            if not order.state:
+                order.state = state
+            continue
+        cleaned_address.append(line)
+    order.address_lines = cleaned_address
+
+    # Dedupe phones while preserving order.
     seen, phones = set(), []
-    for p in order.phones:
-        if p and p not in seen:
-            seen.add(p)
-            phones.append(p)
+    for phone in order.phones:
+        if phone and phone not in seen:
+            seen.add(phone)
+            phones.append(phone)
     order.phones = phones
-    order.address_lines = [l for l in (x.strip() for x in order.address_lines) if l]
     order.note = _clean(order.note)
     return order
-
 
 def _is_bare_phone(value: str) -> bool:
     digits = re.sub(r"\D", "", value)
