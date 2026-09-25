@@ -206,6 +206,14 @@ _PRODUCT_REV_RE = re.compile(
     r"^\s*([A-Za-z][A-Za-z0-9\-]{0,19})\s*(?:[x\u00d7*]\s*)?(\d{1,4})\s*\.?\s*$"
 )
 
+# Product codes used by the operator are often glued to a phone/address line
+# by copy/paste.  Keep this intentionally narrow: a quantity followed by a
+# short alphabetic/alphanumeric product code such as 1cxe or 3CXE.
+_INLINE_PRODUCT_RE = re.compile(
+    r"(?<![A-Za-z0-9])(\d{1,4})\s*(?:[x\u00d7*]\s*)?([A-Za-z][A-Za-z0-9\-]{0,19})(?=\s|$|[.,;])",
+    re.IGNORECASE,
+)
+
 # Labels safe enough to also accept a comma as their separator
 # ("Pincode, 631207" / "State, Tamilnadu").
 _STRONG_LABELS = (
@@ -584,6 +592,12 @@ def _classify_unlabelled(order: Order, value: str) -> None:
     if not value:
         return
 
+    # Some copy/pastes repeat the name on the next line (for example:
+    # "Name: NavyaRaj22" followed by "NavyaRaj22").  Do not turn the
+    # duplicate into an address line.
+    if order.name and value.casefold() == order.name.casefold():
+        return
+
     # A bare six-digit number is always a pincode, never an address line.
     pin = _bare_pincode(value)
     if pin:
@@ -639,6 +653,11 @@ def parse_block(block: list[str]) -> Order:
         if line == config.SENDER_NAME or line.upper() == config.SENDER_NAME.upper():
             continue
         if _SENDER_JUNK_RE.match(line) and not order.name:
+            continue
+
+        # Copy/pasted messages sometimes repeat the customer's name as a
+        # separate line immediately after "Name: ...".  Ignore that duplicate.
+        if order.name and line.casefold() == order.name.casefold():
             continue
 
         # Product lines can appear without a "Product:" label. Only classify
