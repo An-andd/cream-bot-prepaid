@@ -561,8 +561,10 @@ def split_blocks(text: str) -> list[list[str]]:
         if _BILLER_RE.match(line):
             continue
         if not line:
-            if cur and _block_has_name(cur):
-                flush()
+            # Blank lines are only visual separators in pasted WhatsApp/Telegram
+            # text. Do NOT end the current customer block here: product/quantity
+            # lines are often separated from the phone/address by a blank line.
+            # A new customer is still detected by "To:" or a new "Name:" line.
             continue
         if _is_name_start(line) and _block_has_name(cur):
             flush()
