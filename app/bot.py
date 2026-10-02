@@ -176,14 +176,24 @@ def handle_message(wa_id: str, text: str) -> None:
     _store_orders(session, orders)
     store.save_session(wa_id, session)
 
-    parts = [f"Added {len(usable)} address(es). Total: {len(orders)}."]
+    # Do not send a confirmation for every successfully added address.
+    # Only report actual parsing problems.
+    warnings = []
+
     for order in usable:
         missing = order.missing()
         if missing:
-            parts.append(f"! {order.summary()} - missing {', '.join(missing)}")
+            warnings.append(
+                f"! {order.summary()} - missing {', '.join(missing)}"
+            )
+
     if rejected:
-        parts.append(f"{len(rejected)} block(s) skipped: too little information.")
-    whatsapp.send_text(wa_id, "\n".join(parts))
+        warnings.append(
+            f"! {len(rejected)} block(s) skipped: too little information."
+        )
+
+    if warnings:
+        whatsapp.send_text(wa_id, "\n".join(warnings))
 
 
 def _handle_woo(wa_id: str, session: dict, orders: list[Order], command: str) -> None:
